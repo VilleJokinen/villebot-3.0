@@ -69,14 +69,16 @@ brew install yt-dlp ffmpeg
 3. **Bot** tab: **Reset Token** and copy it. This is `DISCORD_TOKEN`. Keep it secret; anyone with it controls the bot. If it leaks, reset it again.
 4. **Bot** tab, Privileged Gateway Intents: leave all off. The bot only uses the `Guilds` and `GuildVoiceStates` intents; it reads no message content.
 5. **Bot** tab: turn **Public Bot** off, since this is a private bot.
-6. **Installation** (or **OAuth2 > URL Generator**): scopes `bot` and `applications.commands`. Bot permissions: View Channels, Connect, Speak, Send Messages.
+6. **Installation** (or **OAuth2 > URL Generator**): scopes `bot` and `applications.commands`. Bot permissions: View Channels, Connect, Speak, Send Messages, Set Voice Channel Status.
 
-   Permission integer: `1<<10` (ViewChannel) + `1<<11` (SendMessages) + `1<<20` (Connect) + `1<<21` (Speak) = 1024 + 2048 + 1048576 + 2097152 = **3148800**.
+   Permission integer: `1<<10` (ViewChannel) + `1<<11` (SendMessages) + `1<<20` (Connect) + `1<<21` (Speak) + `1<<48` (SetVoiceChannelStatus) = 1024 + 2048 + 1048576 + 2097152 + 281474976710656 = **281474979859456**.
+
+   Set Voice Channel Status lets the bot show the current song and the next one in the voice channel's status line. It is optional; without it the bot plays normally and logs one warning.
 
 7. Invite URL (replace `<CLIENT_ID>`), open it and add the bot to your server:
 
    ```
-   https://discord.com/oauth2/authorize?client_id=<CLIENT_ID>&scope=bot+applications.commands&permissions=3148800
+   https://discord.com/oauth2/authorize?client_id=<CLIENT_ID>&scope=bot+applications.commands&permissions=281474979859456
    ```
 
 8. `GUILD_ID`: in Discord, User Settings > Advanced > enable **Developer Mode**. Right-click your server icon > **Copy Server ID**.

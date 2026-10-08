@@ -9,6 +9,7 @@ import {
 import type { GuildPlayer } from '../player/GuildPlayer.js';
 import type { PlayerManager } from '../player/PlayerManager.js';
 import { resolve } from '../ytdlp.js';
+import { syncVoiceStatus } from './voiceStatus.js';
 
 /** Error with a message that is safe and useful to show to the user. */
 class UserError extends Error {}
@@ -219,6 +220,8 @@ export function createBot(client: Client, manager: PlayerManager): void {
       console.error('[bot]', 'unhandled handler error', err),
     );
   });
+
+  syncVoiceStatus(client, manager);
 
   manager.on('trackError', (guildId, item, message) => {
     void (async () => {
