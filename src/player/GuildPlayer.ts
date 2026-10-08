@@ -409,6 +409,12 @@ export class GuildPlayer extends EventEmitter<PlayerEvents> {
       throw err;
     }
     resource.volume?.setVolume(this.volume / 100);
+    // In-band FEC lets listeners rebuild a dropped UDP packet from the next one instead of hearing a gap.
+    // FEC only kicks in with a nonzero expected loss, and it takes bits from the main stream, so run at
+    // the encoder's maximum bitrate to keep music quality up.
+    resource.encoder?.setBitrate(128_000);
+    resource.encoder?.setFEC(true);
+    resource.encoder?.setPLP(0.1);
 
     this.current = item;
     this.resource = resource;

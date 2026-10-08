@@ -1,6 +1,7 @@
 import { Client, Events, GatewayIntentBits } from 'discord.js';
 import { generateDependencyReport } from '@discordjs/voice';
 import type { Server } from 'node:http';
+import { constants as osConstants, setPriority } from 'node:os';
 import { loadConfig } from './config.js';
 import { checkBinaries } from './ytdlp.js';
 import { PlayerManager } from './player/index.js';
@@ -30,6 +31,15 @@ async function main(): Promise<void> {
     fail((err as Error).message);
   }
   if (process.env.VOICE_DEPS_REPORT) console.log(generateDependencyReport());
+
+  // Voice packets go out on a 20 ms timer in this process; when the machine is busy (a game, a build),
+  // a normal-priority bot gets starved and the audio stutters. Needs no admin rights on Windows; on Linux
+  // it requires CAP_SYS_NICE, so a failure is expected there and harmless.
+  try {
+    setPriority(osConstants.priority.PRIORITY_ABOVE_NORMAL);
+  } catch {
+    /* not permitted; run at normal priority */
+  }
 
   const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],

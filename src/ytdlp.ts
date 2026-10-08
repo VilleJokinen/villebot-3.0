@@ -1,6 +1,7 @@
 // yt-dlp / ffmpeg wrapper (chunk C1). Public signatures are a contract; see PLAN.md.
 import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 import type { Readable } from 'node:stream';
 
 export interface TrackInfo {
@@ -334,6 +335,13 @@ function lastNonEmptyLine(s: string): string | null {
 }
 
 /**
+ * How much decoded audio may sit between ffmpeg and the player (~10 s of 48 kHz stereo s16le).
+ * The player reads one 20 ms frame per tick and inserts silence when nothing is ready (stopping the track
+ * after 5 misses), so a short download or CPU hiccup without this headroom is heard as choppy audio.
+ */
+const PCM_BUFFER_BYTES = 48_000 * 2 * 2 * 10;
+
+/**
  * yt-dlp bestaudio piped into ffmpeg. `stream` is raw PCM s16le, 48 kHz, stereo (StreamType.Raw).
  * Emits 'error' (Error) once if yt-dlp or ffmpeg fails before kill() was called. kill() is idempotent
  * and terminates both child processes.
@@ -345,6 +353,7 @@ export class AudioStream extends EventEmitter<{ error: [Error] }> {
   private failed = false;
   private readonly ytdlp;
   private readonly ffmpeg;
+  private readonly buffer = new PassThrough({ highWaterMark: PCM_BUFFER_BYTES });
   private ytStderr = '';
   private ffStderr = '';
   /** undefined = still running. */
@@ -365,7 +374,8 @@ export class AudioStream extends EventEmitter<{ error: [Error] }> {
       ['-hide_banner', '-loglevel', 'error', '-i', 'pipe:0', '-f', 's16le', '-ar', '48000', '-ac', '2', 'pipe:1'],
       { shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] },
     );
-    this.stream = this.ffmpeg.stdout;
+    this.ffmpeg.stdout.pipe(this.buffer);
+    this.stream = this.buffer;
 
     const noop = (): void => {};
     // Swallow EPIPE / ECONNRESET etc. on every stdio stream; real failures are reported via process events.
@@ -375,6 +385,7 @@ export class AudioStream extends EventEmitter<{ error: [Error] }> {
       this.ffmpeg.stdin,
       this.ffmpeg.stdout,
       this.ffmpeg.stderr,
+      this.buffer,
     ]) {
       s.on('error', noop);
     }
@@ -505,7 +516,7 @@ export class AudioStream extends EventEmitter<{ error: [Error] }> {
         /* ignore */
       }
     }
-    // Leave ffmpeg.stdout (the public `stream`) to the consumer when failing, so already-buffered data can drain.
+    // Leave ffmpeg.stdout and the public `stream` to the consumer when failing, so already-buffered data can drain.
   }
 
   kill(): void {
@@ -515,6 +526,7 @@ export class AudioStream extends EventEmitter<{ error: [Error] }> {
     this.teardown();
     try {
       this.ffmpeg.stdout.destroy();
+      this.buffer.destroy();
     } catch {
       /* ignore */
     }
