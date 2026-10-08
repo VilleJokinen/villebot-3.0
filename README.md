@@ -1,0 +1,185 @@
+# VilleBot 3.0
+
+Private, self-hosted Discord music bot with a local web control panel. One Node process (TypeScript run directly with `tsx`, no build step) hosts the Discord bot, the audio player and the panel. Audio comes from YouTube via `yt-dlp` piped into `ffmpeg`.
+
+## Features
+
+Slash commands (guild-only):
+
+| Command | Description |
+|---|---|
+| `/play query` | Search text, YouTube URL or playlist URL. Joins your voice channel, plays now or queues. |
+| `/skip` | Skip the current track. |
+| `/pause`, `/resume` | Pause / resume playback. |
+| `/stop` | Stop playback and clear the queue (stays in the channel). |
+| `/queue` | Show the current track and the next 10 queued. |
+| `/np` | Current track with progress, volume, requester. |
+| `/volume level` | Set volume, 0-100. |
+| `/join` | Join your voice channel. |
+| `/leave` | Leave the voice channel (clears the queue). |
+
+Control panel (web UI, phone-friendly):
+
+- Guild and voice channel picker with Join / Leave
+- Search box and paste-URL/playlist input (URL plays directly, text shows search results)
+- Queue with remove and drag-to-reorder (touch works)
+- Now playing with thumbnail and progress bar
+- Play/pause, skip, stop, volume, loop off / track / queue
+- Live sync over WebSocket; Discord commands and the panel always show the same state
+
+## Requirements
+
+- Node.js >= 22.12 (required by `@discordjs/voice` 0.19)
+- `yt-dlp` and `ffmpeg` on `PATH`
+
+yt-dlp needs a JavaScript runtime to extract from YouTube. The bot passes `--js-runtimes node:<path to the running node>` automatically, so you do not need to install deno. That flag needs a recent yt-dlp (2025.11 or later). If you see `no such option: --js-runtimes`, update yt-dlp.
+
+## Installing yt-dlp and ffmpeg
+
+Windows:
+
+```
+winget install yt-dlp.yt-dlp
+winget install Gyan.FFmpeg
+```
+
+Alternative: `scoop install yt-dlp ffmpeg`. Reopen the terminal afterwards so `PATH` updates, then verify:
+
+```
+yt-dlp --version
+ffmpeg -version
+```
+
+macOS:
+
+```
+brew install yt-dlp ffmpeg
+```
+
+**Keep yt-dlp updated.** YouTube changes break old versions regularly. Most "track failed", "Sign in to confirm you're not a bot" and HTTP 403 errors are fixed by updating:
+
+- Standalone install: `yt-dlp -U`
+- winget: `winget upgrade yt-dlp.yt-dlp`
+- brew: `brew upgrade yt-dlp`
+
+## Discord setup
+
+1. Open https://discord.com/developers/applications and create a **New Application**.
+2. On the General Information page, copy the **Application ID**. This is `CLIENT_ID`.
+3. **Bot** tab: **Reset Token** and copy it. This is `DISCORD_TOKEN`. Keep it secret; anyone with it controls the bot. If it leaks, reset it again.
+4. **Bot** tab, Privileged Gateway Intents: leave all off. The bot only uses the `Guilds` and `GuildVoiceStates` intents; it reads no message content.
+5. **Bot** tab: turn **Public Bot** off, since this is a private bot.
+6. **Installation** (or **OAuth2 > URL Generator**): scopes `bot` and `applications.commands`. Bot permissions: View Channels, Connect, Speak, Send Messages.
+
+   Permission integer: `1<<10` (ViewChannel) + `1<<11` (SendMessages) + `1<<20` (Connect) + `1<<21` (Speak) = 1024 + 2048 + 1048576 + 2097152 = **3148800**.
+
+7. Invite URL (replace `<CLIENT_ID>`), open it and add the bot to your server:
+
+   ```
+   https://discord.com/oauth2/authorize?client_id=<CLIENT_ID>&scope=bot+applications.commands&permissions=3148800
+   ```
+
+8. `GUILD_ID`: in Discord, User Settings > Advanced > enable **Developer Mode**. Right-click your server icon > **Copy Server ID**.
+
+## Configuration
+
+Copy `.env.example` to `.env` and fill it in:
+
+```
+DISCORD_TOKEN=
+CLIENT_ID=
+GUILD_ID=
+
+PANEL_HOST=127.0.0.1
+PANEL_PORT=3000
+PANEL_TOKEN=
+```
+
+| Variable | Meaning |
+|---|---|
+| `DISCORD_TOKEN` | Bot token from the Bot tab. Required. |
+| `CLIENT_ID` | Application ID. Required. |
+| `GUILD_ID` | Server ID that slash commands are registered in. Required. |
+| `PANEL_HOST` | Address the panel binds to. Default `127.0.0.1`. |
+| `PANEL_PORT` | Panel port, 1-65535. Default `3000`. |
+| `PANEL_TOKEN` | Panel password, at least 16 characters. Required. |
+
+Generate a token:
+
+```
+node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))"
+```
+
+Never commit `.env`.
+
+## Running
+
+```
+npm install
+npm run register     # once, and again whenever the command definitions change
+npm run dev          # tsx watch: restarts on file changes
+npm start            # plain run, no watching
+```
+
+`npm run register` registers the commands to the single guild in `GUILD_ID`, so they show up immediately (global commands can take up to an hour). It only needs `DISCORD_TOKEN`, `CLIENT_ID` and `GUILD_ID`.
+
+On startup the bot first checks that `yt-dlp` and `ffmpeg` run. If either is missing it prints install instructions and exits. Config errors (missing variable, `PANEL_TOKEN` shorter than 16 characters, bad `PANEL_PORT`) also exit with a message naming the problem. Then it logs in and starts the panel.
+
+## Control panel
+
+Open once:
+
+```
+http://<PANEL_HOST>:<PANEL_PORT>/?token=<PANEL_TOKEN>
+```
+
+For the defaults: `http://127.0.0.1:3000/?token=<PANEL_TOKEN>`. The server stores the token in an HttpOnly cookie (30 days) and redirects to the URL without `?token=`. Every HTTP request and the WebSocket connection require that cookie (or the token).
+
+Phone access via Tailscale:
+
+1. Install Tailscale on the host machine and the phone, same tailnet.
+2. On the host, get its Tailscale IP: `tailscale ip -4`.
+3. Set `PANEL_HOST` to that IP in `.env` and restart.
+4. On the phone (Tailscale connected), open `http://<tailscale-ip>:<PANEL_PORT>/?token=<PANEL_TOKEN>`.
+
+Security:
+
+- Plain HTTP is acceptable inside Tailscale because traffic is WireGuard-encrypted.
+- Do not bind to `0.0.0.0` and do not port-forward the panel to the internet.
+- Anyone with the token fully controls the bot. To rotate it, change `PANEL_TOKEN` and restart; old cookies stop working.
+- If `PANEL_HOST` is not an address of the machine (for example Tailscale is down, so its IP does not exist), the panel fails to start with an error.
+
+## Behaviour
+
+- `/play` joins your voice channel. If the bot is playing in a different channel, `/play` refuses and tells you which channel to join; if it is idle, it moves to yours.
+- Tracks advance automatically.
+- The bot leaves after 5 minutes with nothing playing, or 30 seconds after the last human leaves its channel.
+- A track that fails (unavailable, age-restricted, region-locked, yt-dlp error) is skipped. The error is posted in the text channel where `/play` was last used, and shown in the panel.
+- Loop modes: `off`, `track` (repeat current), `queue` (finished tracks go to the back). A failed track is never repeated.
+- Volume is per server, defaults to 50, and resets on restart. Queues are in memory too. There is no database, by design.
+- Playlists are capped at 200 entries; private and deleted videos are skipped.
+
+## Project layout
+
+```
+src/index.ts       entry: check binaries, load config, start client, bot and panel
+src/config.ts      .env loading and validation
+src/ytdlp.ts       yt-dlp/ffmpeg wrapper: binary check, search, resolve, AudioStream
+src/player/        PlayerManager (guild -> GuildPlayer, voice events) and GuildPlayer (queue, playback, timers)
+src/bot/           slash command definitions, register script, interaction handlers
+src/panel/         Express REST API, WebSocket broadcast, token auth
+public/            panel frontend (vanilla HTML/CSS/JS)
+PLAN.md            build plan and interface contracts
+```
+
+## Troubleshooting
+
+- **Slash commands don't appear:** run `npm run register`; check `GUILD_ID` is the right server; make sure the bot was invited with the `applications.commands` scope (re-invite with the URL above). `Missing Access` from the register script means the bot is not in that guild or lacks that scope.
+- **Bot joins but no sound:** check `ffmpeg -version` works in the same terminal; update yt-dlp; check the bot has Connect and Speak in that channel; check the bot isn't server-muted and volume isn't 0.
+- **Tracks fail with "Sign in to confirm you're not a bot", 403 or similar:** update yt-dlp (see above).
+- **`no such option: --js-runtimes`:** yt-dlp is too old; update it.
+- **`@discordjs/opus` fails to install:** it is an optional native dependency. The bot falls back to `opusscript` (pure JS) automatically; slightly more CPU, otherwise fine.
+- **Panel shows 401 / "Unauthorized":** open the panel with `?token=<PANEL_TOKEN>` again (cookie expired, or the token changed).
+- **Panel won't start (address error):** `PANEL_HOST` isn't an address on this machine; with Tailscale, make sure it is running and `tailscale ip -4` matches.
+- **`Cannot find module ...`:** run `npm install`.
+- **Node version error / syntax errors on startup:** `node --version` must be >= 22.12.
