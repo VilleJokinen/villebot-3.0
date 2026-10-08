@@ -489,5 +489,6 @@ function bind() {
 }
 
 bind();
+api('GET', '/api/me').then((me) => { const el = $('me'); el.textContent = me.name; el.title = `Signed in as ${me.name}`; el.hidden = false; }).catch(() => {});
 loadGuilds().then(() => { connectWs(); });
 setInterval(() => { if (!document.hidden && !S.dragging) loadGuilds(); }, 60000);

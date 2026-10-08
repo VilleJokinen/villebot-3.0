@@ -92,7 +92,7 @@ GUILD_ID=
 
 PANEL_HOST=127.0.0.1
 PANEL_PORT=3000
-PANEL_TOKEN=
+PANEL_USERS=ville:<token>,alex:<token>
 ```
 
 | Variable | Meaning |
@@ -102,7 +102,8 @@ PANEL_TOKEN=
 | `GUILD_ID` | Server ID that slash commands are registered in. Required. |
 | `PANEL_HOST` | Address the panel binds to. Default `127.0.0.1`. |
 | `PANEL_PORT` | Panel port, 1-65535. Default `3000`. |
-| `PANEL_TOKEN` | Panel password, at least 16 characters. Required. |
+| `PANEL_USERS` | Panel logins, `name:token` pairs separated by commas. Each person gets their own token (at least 16 characters, all different). Names: letters, digits, `_ . -`. |
+| `PANEL_TOKEN` | Optional shorthand for one login named `owner`. At least one of `PANEL_USERS` / `PANEL_TOKEN` is required. |
 
 Generate a token:
 
@@ -123,7 +124,7 @@ npm start            # plain run, no watching
 
 `npm run register` registers the commands to the single guild in `GUILD_ID`, so they show up immediately (global commands can take up to an hour). It only needs `DISCORD_TOKEN`, `CLIENT_ID` and `GUILD_ID`.
 
-On startup the bot validates `.env` (missing variable, `PANEL_TOKEN` shorter than 16 characters, bad `PANEL_PORT` all exit with a message naming the problem), then checks that `yt-dlp` and `ffmpeg` run (if either is missing it prints install instructions and exits), starts the panel, and logs in to Discord. A healthy start looks like:
+On startup the bot validates `.env` (missing variable, a panel token shorter than 16 characters or reused between users, bad `PANEL_PORT` all exit with a message naming the problem), then checks that `yt-dlp` and `ffmpeg` run (if either is missing it prints install instructions and exits), starts the panel, and logs in to Discord. A healthy start looks like:
 
 ```
 [startup] yt-dlp 2026.08.19, ffmpeg ffmpeg version 7.1 ...
@@ -138,10 +139,10 @@ Set `VOICE_DEPS_REPORT=1` to also print the `@discordjs/voice` dependency report
 Open once:
 
 ```
-http://<PANEL_HOST>:<PANEL_PORT>/?token=<PANEL_TOKEN>
+http://<PANEL_HOST>:<PANEL_PORT>/?token=<your token>
 ```
 
-For the defaults: `http://127.0.0.1:3000/?token=<PANEL_TOKEN>`. The server stores the token in an HttpOnly cookie (30 days) and redirects to the URL without `?token=`. Every HTTP request and the WebSocket connection require that cookie (or the token).
+For the defaults: `http://127.0.0.1:3000/?token=<your token>`. The server stores the token in an HttpOnly cookie (30 days) and redirects to the URL without `?token=`. Every HTTP request and the WebSocket connection require that cookie (or the token).
 
 Phone access via Tailscale (recommended: `tailscale serve`, free on the Personal plan):
 
@@ -154,16 +155,26 @@ Phone access via Tailscale (recommended: `tailscale serve`, free on the Personal
    ```
 
    (use your `PANEL_PORT` if it isn't 3000). The first run asks you to enable MagicDNS and HTTPS certificates for the tailnet in the admin console. `--bg` keeps it running across reboots; `tailscale serve status` shows the URL, `tailscale serve reset` removes it.
-4. On the phone (Tailscale connected), open `https://<machine>.<tailnet>.ts.net/?token=<PANEL_TOKEN>` once. After that the cookie is set and the plain URL works. Add it to your home screen.
+4. On the phone (Tailscale connected), open `https://<machine>.<tailnet>.ts.net/?token=<your token>` once. After that the cookie is set and the plain URL works. Add it to your home screen.
 
 This gives you a real HTTPS certificate, reachable only from devices in your tailnet. Enabling HTTPS certificates publishes the machine name and tailnet DNS name in public certificate-transparency logs, so don't use a sensitive machine name.
 
-Alternative without `serve`: set `PANEL_HOST` to the host's Tailscale IP (`tailscale ip -4`) and open `http://<tailscale-ip>:<PANEL_PORT>/?token=<PANEL_TOKEN>`. That's plain HTTP, but still encrypted by Tailscale's WireGuard tunnel.
+Alternative without `serve`: set `PANEL_HOST` to the host's Tailscale IP (`tailscale ip -4`) and open `http://<tailscale-ip>:<PANEL_PORT>/?token=<your token>`. That's plain HTTP, but still encrypted by Tailscale's WireGuard tunnel.
 
-Security:
+### Sharing with friends
+
+Everyone in your Discord server can already use the slash commands. To give a friend the panel too:
+
+1. Generate a token for them and add it to `.env`, e.g. `PANEL_USERS=ville:<token>,alex:<token>`, then restart the bot.
+2. In the Tailscale admin console, Machines, open the bot machine's menu, choose **Share**, and send them the invite link. They install Tailscale, sign in with their own account and accept. They can reach only that machine, not the rest of your tailnet. Machine sharing works on the free plan.
+3. Send them `https://<machine>.<tailnet>.ts.net/?token=<their token>`.
+
+The panel header shows who is signed in, tracks they add show their name as the requester, and every panel action is logged to the console as `[panel] alex POST /api/guilds/.../skip`. To cut someone off, remove their `PANEL_USERS` entry and restart, and/or revoke the share in Tailscale.
+
+### Security
 
 - Do not bind to `0.0.0.0`, don't port-forward the panel, and don't use `tailscale funnel` (that exposes it to the public internet).
-- Anyone with the token fully controls the bot. To rotate it, change `PANEL_TOKEN` and restart; old cookies stop working.
+- Anyone with a valid token fully controls the bot. Revoke or rotate one person by removing or changing their `PANEL_USERS` entry and restarting; only their cookie stops working.
 - If `PANEL_HOST` is not an address of the machine (for example Tailscale is down, so its IP does not exist), the panel fails to start with an error.
 - GitHub Pages or any other static host won't work for the panel. It must be served by the bot itself: the API is same-origin with a SameSite=Strict cookie, and an HTTPS page can't call a plain-HTTP bot anyway.
 
@@ -197,7 +208,7 @@ PLAN.md            build plan and interface contracts
 - **Tracks fail with "Sign in to confirm you're not a bot", 403 or similar:** update yt-dlp (see above).
 - **`no such option: --js-runtimes`:** yt-dlp is too old; update it.
 - **`@discordjs/opus` fails to install:** it is an optional native dependency. The bot falls back to `opusscript` (pure JS) automatically; slightly more CPU, otherwise fine.
-- **Panel shows 401 / "Unauthorized":** open the panel with `?token=<PANEL_TOKEN>` again (cookie expired, or the token changed).
+- **Panel shows 401 / "Unauthorized":** open the panel with your `?token=` link again (cookie expired, or your token was changed or removed).
 - **Panel won't start (address error):** `PANEL_HOST` isn't an address on this machine; with Tailscale, make sure it is running and `tailscale ip -4` matches.
 - **`Cannot find module ...`:** run `npm install`.
 - **Node version error / syntax errors on startup:** `node --version` must be >= 22.12.

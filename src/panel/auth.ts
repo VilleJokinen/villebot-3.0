@@ -1,13 +1,21 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
-import type { RequestHandler } from 'express';
+import type { RequestHandler, Response } from 'express';
+import type { PanelUser } from '../config.js';
 
 const COOKIE_NAME = 'vb_panel';
 const COOKIE_MAX_AGE = 2592000; // 30 days
 
 export interface Auth {
+  /** Authenticates every request; sets res.locals.user to the panel user's name. */
   middleware: RequestHandler;
-  checkUpgrade(req: IncomingMessage): boolean;
+  /** Returns the panel user's name for an allowed WebSocket upgrade, or null to reject it. */
+  checkUpgrade(req: IncomingMessage): string | null;
+}
+
+/** The authenticated panel user's name (set by the auth middleware). */
+export function panelUser(res: Response): string {
+  return typeof res.locals.user === 'string' ? res.locals.user : 'panel';
 }
 
 function digest(value: string): Buffer {
@@ -33,13 +41,18 @@ function parseCookies(header: string | undefined): Record<string, string> {
   return out;
 }
 
-export function createAuth(token: string): Auth {
-  const expected = digest(token);
-  const valid = (candidate: string | null | undefined): boolean =>
-    typeof candidate === 'string' && timingSafeEqual(digest(candidate), expected);
+export function createAuth(users: PanelUser[]): Auth {
+  const known = users.map((u) => ({ name: u.name, digest: digest(u.token) }));
+  /** Name of the user owning this token, or null. Compares against every user so timing doesn't leak which. */
+  const lookup = (candidate: string | null | undefined): string | null => {
+    if (typeof candidate !== 'string' || candidate === '') return null;
+    const d = digest(candidate);
+    let match: string | null = null;
+    for (const u of known) if (timingSafeEqual(d, u.digest)) match = u.name;
+    return match;
+  };
 
-  const cookieValid = (req: IncomingMessage): boolean =>
-    valid(parseCookies(req.headers.cookie)[COOKIE_NAME]);
+  const cookieUser = (req: IncomingMessage): string | null => lookup(parseCookies(req.headers.cookie)[COOKIE_NAME]);
 
   const parseUrl = (req: IncomingMessage): URL => new URL(req.url ?? '/', 'http://panel.invalid');
 
@@ -57,18 +70,19 @@ export function createAuth(token: string): Auth {
       if (isApi) {
         res.json({ error: 'Unauthorized' });
       } else {
-        res.type('text/plain').send('Unauthorized. Open the panel once with ?token=<PANEL_TOKEN>.');
+        res.type('text/plain').send('Unauthorized. Open the panel once with your personal link (…/?token=<your token>).');
       }
     };
 
     if (url.searchParams.has('token')) {
-      if (!valid(url.searchParams.get('token'))) {
+      const token = url.searchParams.get('token');
+      if (!lookup(token)) {
         deny();
         return;
       }
       res.setHeader(
         'Set-Cookie',
-        `${COOKIE_NAME}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${COOKIE_MAX_AGE}`,
+        `${COOKIE_NAME}=${encodeURIComponent(token!)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${COOKIE_MAX_AGE}`,
       );
       url.searchParams.delete('token');
       // Collapse leading slashes so the Location can never be protocol-relative.
@@ -78,18 +92,21 @@ export function createAuth(token: string): Auth {
       return;
     }
 
-    if (!cookieValid(req)) {
+    const user = cookieUser(req);
+    if (!user) {
       deny();
       return;
     }
+    res.locals.user = user;
     next();
   };
 
-  const checkUpgrade = (req: IncomingMessage): boolean => {
+  const checkUpgrade = (req: IncomingMessage): string | null => {
     try {
       const url = parseUrl(req);
-      if (url.pathname !== '/ws') return false;
-      if (!cookieValid(req) && !valid(url.searchParams.get('token'))) return false;
+      if (url.pathname !== '/ws') return null;
+      const user = cookieUser(req) ?? lookup(url.searchParams.get('token'));
+      if (!user) return null;
       const origin = req.headers.origin;
       if (origin !== undefined) {
         // Behind a reverse proxy (e.g. `tailscale serve`) Host may be the upstream address; the public
@@ -100,11 +117,11 @@ export function createAuth(token: string): Auth {
         const hosts = [req.headers.host, ...(Array.isArray(forwarded) ? forwarded : [forwarded])]
           .flatMap((h) => (h ? h.split(',') : []))
           .map((h) => h.trim());
-        if (!hosts.includes(originHost)) return false;
+        if (!hosts.includes(originHost)) return null;
       }
-      return true;
+      return user;
     } catch {
-      return false;
+      return null;
     }
   };
 

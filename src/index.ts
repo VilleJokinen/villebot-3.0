@@ -54,7 +54,7 @@ async function main(): Promise<void> {
     panel = await startPanel({
       host: config.panelHost,
       port: config.panelPort,
-      token: config.panelToken,
+      users: config.panelUsers,
       client,
       manager,
     });

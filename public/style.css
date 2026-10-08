@@ -56,6 +56,8 @@ a { color: inherit; }
   background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
+.me { margin-left: auto; font-size: 0.8rem; color: var(--muted); max-width: 10em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.me + .conn { margin-left: 0; }
 .conn { display: inline-flex; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--muted); margin-left: auto; }
 .conn i { width: 9px; height: 9px; border-radius: 50%; background: var(--warn); }
 .conn[data-state="live"] i { background: var(--ok); }

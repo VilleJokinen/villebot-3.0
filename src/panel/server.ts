@@ -8,7 +8,8 @@ import { WebSocket, WebSocketServer } from 'ws';
 import type { GuildPlayer, PlayerManager } from '../player/index.js';
 import type { LoopMode, GuildPlayerState, QueueItem } from '../player/types.js';
 import { resolve as resolveInput, search } from '../ytdlp.js';
-import { createAuth } from './auth.js';
+import { createAuth, panelUser } from './auth.js';
+import type { PanelUser } from '../config.js';
 
 const PUBLIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../public');
 const PING_INTERVAL_MS = 30_000;
@@ -49,16 +50,23 @@ function body(req: Request): Record<string, unknown> {
 export async function startPanel(opts: {
   host: string;
   port: number;
-  token: string;
+  users: PanelUser[];
   client: Client;
   manager: PlayerManager;
 }): Promise<http.Server> {
-  const { host, port, token, client, manager } = opts;
-  const auth = createAuth(token);
+  const { host, port, users, client, manager } = opts;
+  const auth = createAuth(users);
   const app = express();
   app.disable('x-powered-by');
 
   app.use(auth.middleware);
+  // Audit trail: who did what from the panel.
+  app.use((req, res, next) => {
+    if (req.method !== 'GET' && req.path.startsWith('/api/')) {
+      console.log(`[panel] ${panelUser(res)} ${req.method} ${req.path}`);
+    }
+    next();
+  });
   app.use(requireJson);
   app.use(express.json({ limit: '100kb' }));
 
@@ -81,6 +89,10 @@ export async function startPanel(opts: {
           .map((c) => ({ id: c.id, name: c.name })),
       })),
     );
+  });
+
+  api.get('/me', (_req, res) => {
+    res.json({ name: panelUser(res) });
   });
 
   api.get('/state', (_req, res) => {
@@ -127,7 +139,7 @@ export async function startPanel(opts: {
     if (tracks.length === 0) throw new HttpError(404, 'Nothing found');
     // The player may have left while resolving.
     if (player.getState().channelId === null) throw new HttpError(409, 'Join a voice channel first');
-    const added = player.enqueue(tracks, 'panel', mode === 'now');
+    const added = player.enqueue(tracks, panelUser(res), mode === 'now');
     res.json({ added: added.length, state: player.getState() });
   });
 
@@ -211,7 +223,7 @@ export async function startPanel(opts: {
 
   server.on('upgrade', (req, socket, head) => {
     try {
-      if (!auth.checkUpgrade(req)) {
+      if (auth.checkUpgrade(req) === null) {
         socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
         socket.destroy();
         return;
@@ -284,6 +296,6 @@ export async function startPanel(opts: {
   });
   server.on('error', (err) => console.error('[panel]', 'server error', err));
 
-  console.log(`Panel: http://${host}:${port}/?token=${token.slice(0, 4)}…`);
+  console.log(`Panel: http://${host}:${port}/?token=<token>  (users: ${users.map((u) => u.name).join(', ')})`);
   return server;
 }
