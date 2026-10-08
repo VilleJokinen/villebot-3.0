@@ -1,25 +1,41 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import type { RequestHandler, Response } from 'express';
 import type { PanelUser } from '../config.js';
 
-const COOKIE_NAME = 'vb_panel';
+const COOKIE_NAME = 'vb_session';
 const COOKIE_MAX_AGE = 2592000; // 30 days
+// One browser can hold logins for several servers (someone in two servers with two passwords).
+const MAX_SESSIONS_PER_COOKIE = 10;
+// Failed logins are counted globally: behind `tailscale funnel` every request comes from the same
+// local proxy address, so per-IP limits would not tell visitors apart.
+const FAIL_WINDOW_MS = 15 * 60_000;
+const FAIL_LIMIT = 20;
+
+/** What a logged-in browser may see and control. */
+export interface Access {
+  /** Named login (owner / PANEL_USERS): every server, including ones the bot joins later. */
+  all: boolean;
+  guilds: ReadonlySet<string>;
+  /** Name of the named login, or null when only server passwords were used. */
+  name: string | null;
+}
+
+export const canAccess = (access: Access, guildId: string): boolean => access.all || access.guilds.has(guildId);
+
+/** The Access that the auth middleware attached to an /api request. */
+export const accessOf = (res: Response): Access => res.locals.access as Access;
+
+/** Who did it, for "Requested by" and the log. */
+export const panelUser = (res: Response): string => (res.locals.access as Access | undefined)?.name ?? 'panel';
 
 export interface Auth {
-  /** Authenticates every request; sets res.locals.user to the panel user's name. */
+  /** Security headers, plus 401 for /api/* without a valid session (login/logout excepted). */
   middleware: RequestHandler;
-  /** Returns the panel user's name for an allowed WebSocket upgrade, or null to reject it. */
-  checkUpgrade(req: IncomingMessage): string | null;
-}
-
-/** The authenticated panel user's name (set by the auth middleware). */
-export function panelUser(res: Response): string {
-  return typeof res.locals.user === 'string' ? res.locals.user : 'panel';
-}
-
-function digest(value: string): Buffer {
-  return createHash('sha256').update(value).digest();
+  login: RequestHandler;
+  logout: RequestHandler;
+  /** Access for a WebSocket upgrade, or null to reject it. */
+  checkUpgrade(req: IncomingMessage): Access | null;
 }
 
 function parseCookies(header: string | undefined): Record<string, string> {
@@ -41,18 +57,86 @@ function parseCookies(header: string | undefined): Record<string, string> {
   return out;
 }
 
-export function createAuth(users: PanelUser[]): Auth {
-  const known = users.map((u) => ({ name: u.name, digest: digest(u.token) }));
-  /** Name of the user owning this token, or null. Compares against every user so timing doesn't leak which. */
-  const lookup = (candidate: string | null | undefined): string | null => {
-    if (typeof candidate !== 'string' || candidate === '') return null;
-    const d = digest(candidate);
-    let match: string | null = null;
-    for (const u of known) if (timingSafeEqual(d, u.digest)) match = u.name;
-    return match;
+const hmac = (key: string, value: string): Buffer => createHmac('sha256', key).update(value).digest();
+
+interface Credential {
+  passwordDigest: Buffer;
+  /** Cookie value for this password. Derived from it, so it survives restarts and changes with it. */
+  session: string;
+  sessionDigest: Buffer;
+  all: boolean;
+  guilds: Set<string>;
+  name: string | null;
+}
+
+export function createAuth(opts: { users: readonly PanelUser[]; serverPasswords: ReadonlyMap<string, string> }): Auth {
+  // Group by password: two servers may share one, and a server password may equal a user's token.
+  const byPassword = new Map<string, Credential>();
+  const credential = (password: string): Credential => {
+    let c = byPassword.get(password);
+    if (!c) {
+      const session = hmac(password, 'villebot-panel-session').toString('base64url');
+      c = {
+        passwordDigest: hmac('cmp', password),
+        session,
+        sessionDigest: hmac('cmp', session),
+        all: false,
+        guilds: new Set(),
+        name: null,
+      };
+      byPassword.set(password, c);
+    }
+    return c;
+  };
+  for (const user of opts.users) {
+    const c = credential(user.token);
+    c.all = true;
+    c.name ??= user.name;
+  }
+  for (const [guildId, password] of opts.serverPasswords) credential(password).guilds.add(guildId);
+  const credentials = [...byPassword.values()];
+
+  // Compare against every credential so timing doesn't reveal which one matched.
+  const match = (digest: Buffer, field: 'passwordDigest' | 'sessionDigest'): Credential | null => {
+    let found: Credential | null = null;
+    for (const c of credentials) if (timingSafeEqual(digest, c[field]) && !found) found = c;
+    return found;
   };
 
-  const cookieUser = (req: IncomingMessage): string | null => lookup(parseCookies(req.headers.cookie)[COOKIE_NAME]);
+  const validSessions = (req: IncomingMessage): Credential[] => {
+    const raw = parseCookies(req.headers.cookie)[COOKIE_NAME];
+    if (!raw) return [];
+    const out: Credential[] = [];
+    for (const value of raw.split('.').slice(0, MAX_SESSIONS_PER_COOKIE)) {
+      const c = match(hmac('cmp', value), 'sessionDigest');
+      if (c && !out.includes(c)) out.push(c);
+    }
+    return out;
+  };
+
+  const accessFor = (req: IncomingMessage): Access | null => {
+    const sessions = validSessions(req);
+    if (sessions.length === 0) return null;
+    return {
+      all: sessions.some((c) => c.all),
+      guilds: new Set(sessions.flatMap((c) => [...c.guilds])),
+      name: sessions.find((c) => c.name !== null)?.name ?? null,
+    };
+  };
+
+  const setCookie = (res: Response, sessions: Credential[]): void => {
+    const value = sessions.map((c) => c.session).join('.');
+    res.setHeader(
+      'Set-Cookie',
+      `${COOKIE_NAME}=${value}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${sessions.length ? COOKIE_MAX_AGE : 0}`,
+    );
+  };
+
+  const failures: number[] = [];
+  const pruneFailures = (): void => {
+    const cutoff = Date.now() - FAIL_WINDOW_MS;
+    while (failures.length > 0 && failures[0]! < cutoff) failures.shift();
+  };
 
   const parseUrl = (req: IncomingMessage): URL => new URL(req.url ?? '/', 'http://panel.invalid');
 
@@ -61,55 +145,57 @@ export function createAuth(users: PanelUser[]): Auth {
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('X-Frame-Options', 'DENY');
 
-    const url = parseUrl(req);
-    const isApi = url.pathname === '/api' || url.pathname.startsWith('/api/');
-    if (isApi) res.setHeader('Cache-Control', 'no-store');
-
-    const deny = (): void => {
-      res.status(401);
-      if (isApi) {
-        res.json({ error: 'Unauthorized' });
-      } else {
-        res.type('text/plain').send('Unauthorized. Open the panel once with your personal link (…/?token=<your token>).');
-      }
-    };
-
-    if (url.searchParams.has('token')) {
-      const token = url.searchParams.get('token');
-      if (!lookup(token)) {
-        deny();
-        return;
-      }
-      res.setHeader(
-        'Set-Cookie',
-        `${COOKIE_NAME}=${encodeURIComponent(token!)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${COOKIE_MAX_AGE}`,
-      );
-      url.searchParams.delete('token');
-      // Collapse leading slashes so the Location can never be protocol-relative.
-      const path = url.pathname.replace(/^\/{2,}/, '/');
-      res.setHeader('Cache-Control', 'no-store');
-      res.redirect(302, path + url.search);
+    // Static files are public (they hold no secrets); only the API needs a session.
+    const { pathname } = parseUrl(req);
+    if (pathname !== '/api' && !pathname.startsWith('/api/')) return next();
+    res.setHeader('Cache-Control', 'no-store');
+    if (pathname === '/api/login' || pathname === '/api/logout') return next();
+    const access = accessFor(req);
+    if (!access) {
+      res.status(401).json({ error: 'Unauthorized' });
       return;
     }
-
-    const user = cookieUser(req);
-    if (!user) {
-      deny();
-      return;
-    }
-    res.locals.user = user;
+    res.locals.access = access;
     next();
   };
 
-  const checkUpgrade = (req: IncomingMessage): string | null => {
+  const login: RequestHandler = (req, res) => {
+    pruneFailures();
+    if (failures.length >= FAIL_LIMIT) {
+      res.status(429).json({ error: 'Too many wrong passwords. Try again in a few minutes.' });
+      return;
+    }
+    const given = (req.body as { password?: unknown } | undefined)?.password;
+    const c = typeof given === 'string' ? match(hmac('cmp', given), 'passwordDigest') : null;
+    if (!c) {
+      failures.push(Date.now());
+      if (failures.length === FAIL_LIMIT) {
+        console.warn(`[panel] ${FAIL_LIMIT} wrong panel passwords in 15 minutes; login paused`);
+      }
+      // Small delay to slow down guessing.
+      setTimeout(() => res.status(401).json({ error: 'Wrong password' }), 1000);
+      return;
+    }
+    // Keep logins for other servers; stale ones (changed passwords) drop out here.
+    const sessions = [c, ...validSessions(req).filter((s) => s !== c)].slice(0, MAX_SESSIONS_PER_COOKIE);
+    setCookie(res, sessions);
+    res.json({ ok: true });
+  };
+
+  const logout: RequestHandler = (_req, res) => {
+    setCookie(res, []);
+    res.json({ ok: true });
+  };
+
+  const checkUpgrade = (req: IncomingMessage): Access | null => {
     try {
       const url = parseUrl(req);
       if (url.pathname !== '/ws') return null;
-      const user = cookieUser(req) ?? lookup(url.searchParams.get('token'));
-      if (!user) return null;
+      const access = accessFor(req);
+      if (!access) return null;
       const origin = req.headers.origin;
       if (origin !== undefined) {
-        // Behind a reverse proxy (e.g. `tailscale serve`) Host may be the upstream address; the public
+        // Behind a reverse proxy (e.g. `tailscale funnel`) Host may be the upstream address; the public
         // host is then in X-Forwarded-Host. Browsers can't set headers on a WebSocket handshake, so
         // accepting either does not weaken the cross-site check.
         const originHost = new URL(origin).host;
@@ -119,11 +205,11 @@ export function createAuth(users: PanelUser[]): Auth {
           .map((h) => h.trim());
         if (!hosts.includes(originHost)) return null;
       }
-      return user;
+      return access;
     } catch {
       return null;
     }
   };
 
-  return { middleware, checkUpgrade };
+  return { middleware, login, logout, checkUpgrade };
 }

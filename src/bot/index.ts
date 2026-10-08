@@ -56,7 +56,28 @@ async function callerChannelId(i: ChatInputCommandInteraction<'cached' | 'raw'>)
 
 type Reply = (content: string, ephemeral?: boolean) => Promise<void>;
 
-async function handle(interaction: ChatInputCommandInteraction<'cached' | 'raw'>, manager: PlayerManager): Promise<void> {
+export interface PanelInfo {
+  panelUrl: string | null;
+  serverPasswords: ReadonlyMap<string, string>;
+}
+
+function linkText(panel: PanelInfo, guildId: string): string {
+  if (!panel.panelUrl) return 'The control panel link is not set up yet. The bot owner needs to set `PANEL_URL` in `.env`.';
+  const password = panel.serverPasswords.get(guildId);
+  if (!password) {
+    return `This server has no panel password yet. The bot owner needs to add \`PANEL_PASSWORD_${guildId}=...\` to \`.env\` and restart the bot.`;
+  }
+  const url = `${panel.panelUrl}/?guild=${guildId}`;
+  // Inline code makes the password easy to copy; it can't hold a backtick, so fall back to escaping.
+  const pw = password.includes('`') ? esc(password) : `\`${password}\``;
+  return `🎛️ Control panel: ${url}\nPassword: ${pw}\n\nDon't share the password outside this server.`;
+}
+
+async function handle(
+  interaction: ChatInputCommandInteraction<'cached' | 'raw'>,
+  manager: PlayerManager,
+  panel: PanelInfo,
+): Promise<void> {
   const guildId = interaction.guildId;
   if (!guildId) return;
   let deferred = false;
@@ -127,6 +148,10 @@ async function handle(interaction: ChatInputCommandInteraction<'cached' | 'raw'>
       case 'leave': {
         player.leave();
         await reply('👋 Left the voice channel');
+        break;
+      }
+      case 'link': {
+        await reply(linkText(panel, guildId), true);
         break;
       }
       default:
@@ -213,10 +238,10 @@ function npEmbed(player: GuildPlayer): EmbedBuilder | null {
   return embed;
 }
 
-export function createBot(client: Client, manager: PlayerManager): void {
+export function createBot(client: Client, manager: PlayerManager, panel: PanelInfo): void {
   client.on('interactionCreate', (interaction: Interaction) => {
     if (!interaction.isChatInputCommand() || !interaction.inGuild()) return;
-    handle(interaction as ChatInputCommandInteraction<'cached' | 'raw'>, manager).catch((err) =>
+    handle(interaction as ChatInputCommandInteraction<'cached' | 'raw'>, manager, panel).catch((err) =>
       console.error('[bot]', 'unhandled handler error', err),
     );
   });

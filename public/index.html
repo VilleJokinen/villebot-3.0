@@ -10,8 +10,18 @@
 <script type="module" src="app.js"></script>
 </head>
 <body>
-<div id="expired" class="expired" hidden>
-  <p>Session expired or missing. Open the panel with ?token=YOUR_PANEL_TOKEN</p>
+<div id="login" class="login" hidden>
+  <form id="login-form" class="card login-card">
+    <h1>VilleBot</h1>
+    <p id="login-note" class="muted small" hidden></p>
+    <label class="login-field">
+      <span>Password</span>
+      <input id="login-pw" type="password" autocomplete="current-password" required>
+    </label>
+    <button id="login-go" class="btn primary" type="submit">Log in</button>
+    <button id="login-cancel" class="btn" type="button" hidden>Cancel</button>
+    <div id="login-err" class="login-err small" role="alert"></div>
+  </form>
 </div>
 
 <header class="topbar">
@@ -29,6 +39,7 @@
     </label>
     <button id="join" class="btn primary" type="button">Join</button>
     <button id="leave" class="btn" type="button">Leave</button>
+    <button id="logout" class="btn" type="button">Log out</button>
   </div>
 </header>
 

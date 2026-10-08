@@ -57,7 +57,7 @@ a { color: inherit; }
   border-bottom: 1px solid var(--border);
 }
 .me { margin-left: auto; font-size: 0.8rem; color: var(--muted); max-width: 10em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.me + .conn { margin-left: 0; }
+.me:not([hidden]) + .conn { margin-left: 0; }
 .conn { display: inline-flex; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--muted); margin-left: auto; }
 .conn i { width: 9px; height: 9px; border-radius: 50%; background: var(--warn); }
 .conn[data-state="live"] i { background: var(--ok); }
@@ -67,7 +67,7 @@ a { color: inherit; }
 .pickers { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; }
 .field { flex: 1 1 140px; min-width: 0; }
 
-select, input[type="search"], input[type="text"] {
+select, input[type="search"], input[type="text"], input[type="password"] {
   width: 100%; min-height: var(--tap);
   padding: 0 12px;
   background: var(--surface-2); color: var(--text);
@@ -177,7 +177,12 @@ a.title:hover { text-decoration: underline; }
 .toast.info { border-color: var(--accent); }
 @keyframes slide { from { transform: translateY(-12px); opacity: 0; } }
 
-.expired { position: fixed; inset: 0; z-index: 100; background: var(--bg); display: flex; align-items: center; justify-content: center; padding: 24px; text-align: center; font-size: 1.15rem; }
+.login { position: fixed; inset: 0; z-index: 100; background: var(--bg); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.login-card { width: 100%; max-width: 340px; display: flex; flex-direction: column; gap: 14px; padding: 24px; }
+.login-field { display: flex; flex-direction: column; gap: 6px; }
+.login-field span { color: var(--muted); font-size: 0.9rem; }
+.login-err { color: var(--danger); min-height: 1.2em; }
+.login-card p { margin: 0; }
 
 /* ---------- wide ---------- */
 @media (min-width: 900px) {

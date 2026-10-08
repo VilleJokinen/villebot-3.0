@@ -18,6 +18,7 @@ export const commands: SlashCommandBuilder[] = [
   ) as SlashCommandBuilder,
   base('join', 'Join your voice channel'),
   base('leave', 'Leave the voice channel'),
+  base('link', 'Get the control panel link and password (only you see the reply)'),
 ];
 
 export function commandsJSON(): ReturnType<SlashCommandBuilder['toJSON']>[] {

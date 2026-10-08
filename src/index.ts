@@ -37,14 +37,12 @@ async function main(): Promise<void> {
     allowedMentions: { parse: [] },
   });
   const manager = new PlayerManager(client);
-  createBot(client, manager);
+  createBot(client, manager, { panelUrl: config.panelUrl, serverPasswords: config.serverPasswords });
 
   client.once(Events.ClientReady, (c) => {
     const guilds = c.guilds.cache.map((g) => g.name).join(', ') || 'none';
     console.log(`[discord] logged in as ${c.user.tag}; servers: ${guilds}`);
-    if (!c.guilds.cache.has(config.guildId)) {
-      console.warn(`[discord] the bot is not in GUILD_ID ${config.guildId}. Invite it with the URL from the README.`);
-    }
+    if (c.guilds.cache.size === 0) console.warn('[discord] the bot is in no servers. Invite it with the URL from the README.');
   });
   client.on(Events.Error, (err) => console.error('[discord]', err));
   client.on(Events.ShardDisconnect, (_e, id) => console.warn(`[discord] gateway disconnected (shard ${id}); reconnecting`));
@@ -55,6 +53,7 @@ async function main(): Promise<void> {
       host: config.panelHost,
       port: config.panelPort,
       users: config.panelUsers,
+      serverPasswords: config.serverPasswords,
       client,
       manager,
     });

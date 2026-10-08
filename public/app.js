@@ -7,12 +7,15 @@ const S = {
   guilds: [],
   states: new Map(),
   gid: null,
+  wantGid: null, // server from a /link URL, selected once the login covers it
+  linkToken: null, // personal ?token= link: logged in with automatically
   channel: null,
   results: [],
   searching: false,
   dragging: false,
   pendingRender: false,
   volDragging: false,
+  authed: false,
   ws: null,
   wsDelay: 1000,
   wsTimer: null,
@@ -65,7 +68,7 @@ async function api(method, path, body) {
   let data = null;
   try { data = await res.json(); } catch { /* non-JSON */ }
   if (res.status === 401) {
-    $('expired').hidden = false;
+    showLogin();
     throw new ApiError(401, 'Unauthorized');
   }
   if (!res.ok) throw new ApiError(res.status, data?.error ?? `Request failed (${res.status})`);
@@ -95,21 +98,115 @@ function applyState(st) {
 
 const post = (action, body) => api('POST', `/api/guilds/${S.gid}/${action}`, body).then(applyState);
 
+// ---------------------------------------------------------------- login
+function closeWs() {
+  clearTimeout(S.wsTimer);
+  if (S.ws) { const ws = S.ws; S.ws = null; ws.close(); }
+}
+
+/** Show the password form. `adding`: already logged in, just unlocking another server. */
+function showLogin(note = '', adding = false) {
+  if (!adding) {
+    S.authed = false;
+    closeWs();
+    $('me').hidden = true;
+  }
+  $('login-note').textContent = note;
+  $('login-note').hidden = !note;
+  $('login-cancel').hidden = !adding;
+  if (!$('login').hidden) return;
+  $('login').hidden = false;
+  $('login-err').textContent = '';
+  $('login-pw').value = '';
+  $('login-pw').focus();
+}
+
+function cancelLogin() {
+  S.wantGid = null;
+  $('login').hidden = true;
+}
+
+/** POST the password; throws with the server's message on failure. */
+async function postLogin(password) {
+  const res = await fetch('/api/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password }),
+  });
+  if (!res.ok) {
+    let msg = `Login failed (${res.status})`;
+    try { msg = (await res.json()).error ?? msg; } catch { /* non-JSON */ }
+    throw new Error(msg);
+  }
+}
+
+async function login(e) {
+  e.preventDefault();
+  const btn = $('login-go');
+  if (btn.disabled) return;
+  btn.disabled = true;
+  btn.classList.add('busy');
+  $('login-err').textContent = '';
+  try {
+    await postLogin($('login-pw').value);
+    $('login').hidden = true;
+    $('login-pw').value = '';
+    // The live connection's server list is fixed when it opens; reopen it with the new login.
+    closeWs();
+    await start();
+  } catch (err) {
+    $('login-err').textContent = err instanceof TypeError ? 'Network error. Is the bot reachable?' : err.message;
+    $('login-pw').select();
+  } finally {
+    btn.disabled = false;
+    btn.classList.remove('busy');
+  }
+}
+
+async function logout() {
+  try { await api('POST', '/api/logout'); } catch { /* ignore */ }
+  showLogin();
+}
+
+/** Load servers and open the live connection once logged in. */
+async function start() {
+  if (S.linkToken) {
+    const token = S.linkToken;
+    S.linkToken = null;
+    try { await postLogin(token); } catch (e) { toast(`Link login failed: ${e.message}`); }
+  }
+  if (!(await loadGuilds())) return;
+  connectWs();
+  api('GET', '/api/me').then((me) => {
+    const label = $('me');
+    label.hidden = !me.name;
+    label.textContent = me.name ?? '';
+    label.title = me.name ? `Signed in as ${me.name}` : '';
+  }).catch(() => {});
+  if (S.wantGid) showLogin("This link is for a server you're not logged in to. Enter that server's password.", true);
+}
+
 // ---------------------------------------------------------------- guilds
 async function loadGuilds() {
   try {
     S.guilds = await api('GET', '/api/guilds');
   } catch (e) {
     if (e.status !== 401) toast(e.message);
-    return;
+    return false;
   }
+  S.authed = true;
   let saved = null;
   try { saved = localStorage.getItem(LS_GUILD); } catch { /* ignore */ }
-  if (!S.guilds.some((g) => g.id === S.gid)) {
+  if (S.wantGid && S.guilds.some((g) => g.id === S.wantGid)) {
+    S.gid = S.wantGid;
+    S.wantGid = null;
+    try { localStorage.setItem(LS_GUILD, S.gid); } catch { /* ignore */ }
+  } else if (!S.guilds.some((g) => g.id === S.gid)) {
     S.gid = S.guilds.some((g) => g.id === saved) ? saved : S.guilds[0]?.id ?? null;
   }
   renderPickers();
   render();
+  return true;
 }
 
 function renderPickers() {
@@ -406,6 +503,7 @@ function setConn(stateName, text) {
 
 function connectWs() {
   clearTimeout(S.wsTimer);
+  if (!S.authed) return;
   if (S.ws && S.ws.readyState <= 1) return;
   setConn('connecting', 'Connecting…');
   const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
@@ -424,7 +522,7 @@ function connectWs() {
     }
   };
   ws.onclose = () => {
-    if (S.ws !== ws) return;
+    if (S.ws !== ws || !S.authed) return;
     setConn('down', 'Reconnecting…');
     S.wsTimer = setTimeout(connectWs, S.wsDelay);
     S.wsDelay = Math.min(10000, S.wsDelay * 2);
@@ -453,6 +551,9 @@ function bind() {
   }
   $('join').addEventListener('click', () => act($('join'), () => post('join', { channelId: $('channel').value })));
   $('leave').addEventListener('click', () => act($('leave'), () => post('leave')));
+  $('logout').addEventListener('click', logout);
+  $('login-form').addEventListener('submit', login);
+  $('login-cancel').addEventListener('click', cancelLogin);
   $('c-pause').addEventListener('click', () => act($('c-pause'), () => post(state()?.paused ? 'resume' : 'pause')));
   $('c-skip').addEventListener('click', () => act($('c-skip'), () => post('skip')));
   $('c-stop').addEventListener('click', () => act($('c-stop'), () => post('stop')));
@@ -480,7 +581,7 @@ function bind() {
   $('u-queue').addEventListener('click', () => play($('q').value.trim(), 'queue', $('u-queue')));
 
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState !== 'visible') return;
+    if (document.visibilityState !== 'visible' || !S.authed) return;
     if (!S.ws || S.ws.readyState > 1) { S.wsDelay = 1000; connectWs(); }
     api('GET', '/api/state').then((arr) => { S.states = new Map(arr.map((s) => [s.guildId, s])); render(); }).catch(() => {});
     tick();
@@ -488,7 +589,22 @@ function bind() {
   window.addEventListener('online', () => { if (!S.ws || S.ws.readyState > 1) connectWs(); });
 }
 
+// A /link URL carries ?guild=<id>: select that server once logged in to it. A personal link carries
+// ?token=<token>: log in with it. Either way, tidy the address bar so the token isn't left in it.
+{
+  const params = new URLSearchParams(location.search);
+  const g = params.get('guild');
+  const token = params.get('token');
+  if (g || token) {
+    S.wantGid = g;
+    S.linkToken = token;
+    params.delete('guild');
+    params.delete('token');
+    const qs = params.toString();
+    history.replaceState(null, '', location.pathname + (qs ? `?${qs}` : '') + location.hash);
+  }
+}
+
 bind();
-api('GET', '/api/me').then((me) => { const el = $('me'); el.textContent = me.name; el.title = `Signed in as ${me.name}`; el.hidden = false; }).catch(() => {});
-loadGuilds().then(() => { connectWs(); });
-setInterval(() => { if (!document.hidden && !S.dragging) loadGuilds(); }, 60000);
+start();
+setInterval(() => { if (S.authed && !document.hidden && !S.dragging) loadGuilds(); }, 60000);
