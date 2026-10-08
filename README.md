@@ -143,19 +143,29 @@ http://<PANEL_HOST>:<PANEL_PORT>/?token=<PANEL_TOKEN>
 
 For the defaults: `http://127.0.0.1:3000/?token=<PANEL_TOKEN>`. The server stores the token in an HttpOnly cookie (30 days) and redirects to the URL without `?token=`. Every HTTP request and the WebSocket connection require that cookie (or the token).
 
-Phone access via Tailscale:
+Phone access via Tailscale (recommended: `tailscale serve`, free on the Personal plan):
 
-1. Install Tailscale on the host machine and the phone, same tailnet.
-2. On the host, get its Tailscale IP: `tailscale ip -4`.
-3. Set `PANEL_HOST` to that IP in `.env` and restart.
-4. On the phone (Tailscale connected), open `http://<tailscale-ip>:<PANEL_PORT>/?token=<PANEL_TOKEN>`.
+1. Install Tailscale on the host machine and the phone and log both in to the same tailnet.
+2. Keep `PANEL_HOST=127.0.0.1` in `.env`. The panel stays bound to localhost; Tailscale proxies to it.
+3. On the host run:
+
+   ```
+   tailscale serve --bg 3000
+   ```
+
+   (use your `PANEL_PORT` if it isn't 3000). The first run asks you to enable MagicDNS and HTTPS certificates for the tailnet in the admin console. `--bg` keeps it running across reboots; `tailscale serve status` shows the URL, `tailscale serve reset` removes it.
+4. On the phone (Tailscale connected), open `https://<machine>.<tailnet>.ts.net/?token=<PANEL_TOKEN>` once. After that the cookie is set and the plain URL works. Add it to your home screen.
+
+This gives you a real HTTPS certificate, reachable only from devices in your tailnet. Enabling HTTPS certificates publishes the machine name and tailnet DNS name in public certificate-transparency logs, so don't use a sensitive machine name.
+
+Alternative without `serve`: set `PANEL_HOST` to the host's Tailscale IP (`tailscale ip -4`) and open `http://<tailscale-ip>:<PANEL_PORT>/?token=<PANEL_TOKEN>`. That's plain HTTP, but still encrypted by Tailscale's WireGuard tunnel.
 
 Security:
 
-- Plain HTTP is acceptable inside Tailscale because traffic is WireGuard-encrypted.
-- Do not bind to `0.0.0.0` and do not port-forward the panel to the internet.
+- Do not bind to `0.0.0.0`, don't port-forward the panel, and don't use `tailscale funnel` (that exposes it to the public internet).
 - Anyone with the token fully controls the bot. To rotate it, change `PANEL_TOKEN` and restart; old cookies stop working.
 - If `PANEL_HOST` is not an address of the machine (for example Tailscale is down, so its IP does not exist), the panel fails to start with an error.
+- GitHub Pages or any other static host won't work for the panel. It must be served by the bot itself: the API is same-origin with a SameSite=Strict cookie, and an HTTPS page can't call a plain-HTTP bot anyway.
 
 ## Behaviour
 

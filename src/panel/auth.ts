@@ -92,8 +92,15 @@ export function createAuth(token: string): Auth {
       if (!cookieValid(req) && !valid(url.searchParams.get('token'))) return false;
       const origin = req.headers.origin;
       if (origin !== undefined) {
-        const host = req.headers.host;
-        if (!host || new URL(origin).host !== host) return false;
+        // Behind a reverse proxy (e.g. `tailscale serve`) Host may be the upstream address; the public
+        // host is then in X-Forwarded-Host. Browsers can't set headers on a WebSocket handshake, so
+        // accepting either does not weaken the cross-site check.
+        const originHost = new URL(origin).host;
+        const forwarded = req.headers['x-forwarded-host'];
+        const hosts = [req.headers.host, ...(Array.isArray(forwarded) ? forwarded : [forwarded])]
+          .flatMap((h) => (h ? h.split(',') : []))
+          .map((h) => h.trim());
+        if (!hosts.includes(originHost)) return false;
       }
       return true;
     } catch {
