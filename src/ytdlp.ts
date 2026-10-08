@@ -14,6 +14,20 @@ export interface TrackInfo {
   thumbnail: string | null;
   /** Canonical watch URL: https://www.youtube.com/watch?v=<id> */
   url: string;
+  /**
+   * Set on Spotify tracks not yet matched to a YouTube video. id/url then point at Spotify, and the
+   * player looks the track up on YouTube (spotify.ts matchOnYouTube) shortly before it plays.
+   */
+  spotify?: SpotifyMatch;
+}
+
+/** What to look for on YouTube for a Spotify track. */
+export interface SpotifyMatch {
+  title: string;
+  /** Comma-separated artist names. */
+  artists: string;
+  /** Seconds, or null when Spotify did not say. */
+  duration: number | null;
 }
 
 const SINGLE_TIMEOUT_MS = 30_000;

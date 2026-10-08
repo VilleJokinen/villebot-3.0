@@ -12,6 +12,7 @@ import {
   joinVoiceChannel,
 } from '@discordjs/voice';
 import type { AudioPlayer, AudioResource, VoiceConnection } from '@discordjs/voice';
+import { matchOnYouTube } from '../spotify.js';
 import { AudioStream } from '../ytdlp.js';
 import type { TrackInfo } from '../ytdlp.js';
 import type { GuildPlayerState, LoopMode, PlayerEvents, QueueItem } from './types.js';
@@ -29,6 +30,8 @@ const EARLY_END_MS = 1_500;
  * which is fine because the track did play.
  */
 const ERROR_GRACE_MS = 300;
+/** Upcoming Spotify tracks matched on YouTube in advance, so the next one starts without a search delay. */
+const MATCH_AHEAD = 2;
 
 const noop = (): void => {};
 
@@ -70,6 +73,8 @@ export class GuildPlayer extends EventEmitter<PlayerEvents> {
   /** The current track is ending because of skip(), so it is neither a failure nor replayed by loop=track. */
   private skipped = false;
   private pending: NodeJS.Timeout | null = null;
+  /** YouTube lookups for Spotify queue items, by uid. A failed lookup stays here so it is not retried. */
+  private matches = new Map<string, Promise<void>>();
   private idleTimer: NodeJS.Timeout | null = null;
   private emptyTimer: NodeJS.Timeout | null = null;
 
@@ -279,6 +284,7 @@ export class GuildPlayer extends EventEmitter<PlayerEvents> {
           this.playNext();
         }
       }
+      this.matchAhead();
       this.emitState();
     });
     return items;
@@ -288,6 +294,8 @@ export class GuildPlayer extends EventEmitter<PlayerEvents> {
     const i = this.queue.findIndex((q) => q.uid === uid);
     if (i < 0) return false;
     this.queue.splice(i, 1);
+    this.matches.delete(uid);
+    this.matchAhead();
     this.emitState();
     return true;
   }
@@ -299,6 +307,7 @@ export class GuildPlayer extends EventEmitter<PlayerEvents> {
     const to = Math.max(0, Math.min(this.queue.length - 1, Math.trunc(Number(toIndex)) || 0));
     const [item] = this.queue.splice(from, 1);
     this.queue.splice(to, 0, item!);
+    this.matchAhead();
     this.emitState();
     return true;
   }
@@ -371,11 +380,18 @@ export class GuildPlayer extends EventEmitter<PlayerEvents> {
         this.emitState();
         return;
       }
-      if (this.tryStart(next)) return;
+      if (this.tryStart(next)) {
+        this.matchAhead();
+        return;
+      }
     }
   }
 
   private tryStart(item: QueueItem): boolean {
+    if (item.spotify) {
+      this.startAfterMatch(item);
+      return true;
+    }
     try {
       this.startTrack(item);
       return true;
@@ -425,6 +441,60 @@ export class GuildPlayer extends EventEmitter<PlayerEvents> {
     this.cancelIdle();
     this.player.play(resource);
     this.emitState();
+  }
+
+  /**
+   * Makes a Spotify item current while it is looked up on YouTube, then starts it. Skip/stop/leave
+   * during the lookup bump the token, which makes the late result a no-op.
+   */
+  private startAfterMatch(item: QueueItem): void {
+    this.killAudio();
+    this.clearPending();
+    const token = ++this.token;
+    this.current = item;
+    this.resource = null;
+    this.failed = null;
+    this.skipped = false;
+    this.paused = false;
+    this.cancelIdle();
+    this.emitState();
+    this.matchItem(item).then(
+      () =>
+        this.safe(() => {
+          if (token !== this.token || this.current !== item) return;
+          if (!this.tryStart(item)) this.playNext();
+        }),
+      (err: unknown) =>
+        this.safe(() => {
+          if (token !== this.token || this.current !== item) return;
+          this.failCurrent(errMessage(err));
+        }),
+    );
+  }
+
+  /** Looks a Spotify item up on YouTube once and turns it into that video in place. */
+  private matchItem(item: QueueItem): Promise<void> {
+    let match = this.matches.get(item.uid);
+    if (!match) {
+      const want = item.spotify!;
+      match = matchOnYouTube(want).then((track) => {
+        // Same object the queue holds, so the queue and current track update with it.
+        Object.assign(item, track);
+        delete item.spotify;
+        this.matches.delete(item.uid);
+        this.emitState();
+      });
+      match.catch(noop); // reported when the item is played
+      this.matches.set(item.uid, match);
+    }
+    return match;
+  }
+
+  /** Starts YouTube lookups for the next few Spotify items in the queue. */
+  private matchAhead(): void {
+    for (const item of this.queue.slice(0, MATCH_AHEAD)) {
+      if (item.spotify) void this.matchItem(item).catch(noop);
+    }
   }
 
   private onStreamError(token: number, err: Error): void {
@@ -491,6 +561,7 @@ export class GuildPlayer extends EventEmitter<PlayerEvents> {
   private resetPlayback(): void {
     this.clearPending();
     this.queue = [];
+    this.matches.clear();
     this.token++;
     this.current = null; // before player.stop so the Idle handler ignores it
     this.resource = null;

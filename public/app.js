@@ -30,7 +30,7 @@ function fmt(sec) {
   const s = sec % 60;
   return h ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
 }
-const isUrl = (v) => /^https?:\/\/\S+$/i.test(v.trim());
+const isUrl = (v) => /^(https?:\/\/|spotify:)\S+$/i.test(v.trim());
 const state = () => S.states.get(S.gid) ?? null;
 const guild = () => S.guilds.find((g) => g.id === S.gid) ?? null;
 

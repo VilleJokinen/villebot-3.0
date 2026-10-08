@@ -7,6 +7,7 @@ import type { Client } from 'discord.js';
 import { WebSocket, WebSocketServer } from 'ws';
 import type { GuildPlayer, PlayerManager } from '../player/index.js';
 import type { LoopMode, GuildPlayerState, QueueItem } from '../player/types.js';
+import { isSpotifyInput, resolveSpotify } from '../spotify.js';
 import { resolve as resolveInput, search } from '../ytdlp.js';
 import { accessOf, canAccess, createAuth, panelUser, type Access } from './auth.js';
 import type { PanelUser } from '../config.js';
@@ -141,7 +142,8 @@ export async function startPanel(opts: {
     if (player.getState().channelId === null) throw new HttpError(409, 'Join a voice channel first');
     let tracks;
     try {
-      tracks = await resolveInput(input.trim());
+      const text = input.trim();
+      tracks = isSpotifyInput(text) ? await resolveSpotify(text) : await resolveInput(text);
     } catch (err) {
       throw new HttpError(400, err instanceof Error ? err.message : String(err));
     }

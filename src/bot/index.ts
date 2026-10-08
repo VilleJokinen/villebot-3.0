@@ -8,6 +8,7 @@ import {
 } from 'discord.js';
 import type { GuildPlayer } from '../player/GuildPlayer.js';
 import type { PlayerManager } from '../player/PlayerManager.js';
+import { isSpotifyInput, resolveSpotify } from '../spotify.js';
 import { resolve } from '../ytdlp.js';
 import { syncVoiceStatus } from './voiceStatus.js';
 import type { HealthMonitor } from '../health.js';
@@ -186,7 +187,7 @@ async function play(
   if (state.channelId !== channelId) await player.join(channelId);
 
   const query = interaction.options.getString('query', true).trim();
-  const tracks = await resolve(query);
+  const tracks = isSpotifyInput(query) ? await resolveSpotify(query) : await resolve(query);
   if (tracks.length === 0) throw new UserError('No results found');
 
   const member = await memberOf(interaction);
@@ -195,7 +196,7 @@ async function play(
   player.enqueue(tracks, member.displayName);
 
   if (tracks.length > 1) {
-    await reply(`Queued ${tracks.length} tracks from the playlist`);
+    await reply(`Queued ${tracks.length} tracks`);
   } else {
     const t = tracks[0]!;
     await reply(

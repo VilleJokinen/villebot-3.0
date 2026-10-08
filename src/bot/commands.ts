@@ -5,7 +5,7 @@ const base = (name: string, description: string): SlashCommandBuilder =>
 
 export const commands: SlashCommandBuilder[] = [
   base('play', 'Play a song or add it to the queue').addStringOption((o) =>
-    o.setName('query').setDescription('Search text, YouTube URL or playlist URL').setRequired(true),
+    o.setName('query').setDescription('Search text, YouTube URL or playlist, or Spotify track/album/playlist link').setRequired(true),
   ) as SlashCommandBuilder,
   base('skip', 'Skip the current track'),
   base('pause', 'Pause playback'),

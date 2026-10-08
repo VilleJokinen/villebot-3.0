@@ -8,7 +8,7 @@ Slash commands (guild-only):
 
 | Command | Description |
 |---|---|
-| `/play query` | Search text, YouTube URL or playlist URL. Joins your voice channel, plays now or queues. |
+| `/play query` | Search text, YouTube URL or playlist URL, or a Spotify track, album or playlist link. Joins your voice channel, plays now or queues. |
 | `/skip` | Skip the current track. |
 | `/pause`, `/resume` | Pause / resume playback. |
 | `/stop` | Stop playback and clear the queue (stays in the channel). |
@@ -21,7 +21,7 @@ Slash commands (guild-only):
 Control panel (web UI, phone-friendly):
 
 - Guild and voice channel picker with Join / Leave
-- Search box and paste-URL/playlist input (URL plays directly, text shows search results)
+- Search box and paste-URL/playlist input (URL plays directly, text shows search results). Spotify links work too.
 - Queue with remove and drag-to-reorder (touch works)
 - Now playing with thumbnail and progress bar
 - Play/pause, skip, stop, volume, loop off / track / queue
@@ -227,6 +227,15 @@ Security:
 - Volume is per server, defaults to 50, and resets on restart. Queues are in memory too. There is no database, by design.
 - Playlists are capped at 200 entries; private and deleted videos are skipped.
 
+### Spotify links
+
+Paste an `open.spotify.com` track, album or playlist link (or a `spotify:` URI or `spotify.link` short link) into `/play` or the panel. Spotify only supplies the track list; the audio still comes from YouTube. No Spotify account, app or API key is needed.
+
+- The track list is read from Spotify's public embed page, so private playlists don't work. Large playlists may be cut short, because the embed page lists only the first 100 or so tracks. Artist and podcast links are not supported.
+- Each track is looked up on YouTube shortly before it plays, so a big playlist queues instantly. The next 2 tracks are looked up ahead of time so they start without a delay. Until then, a queued track shows its Spotify title and links to Spotify.
+- The match is the one of the top 5 YouTube results whose length is closest to Spotify's. Live, cover, remix, sped-up and similar versions are avoided unless the Spotify title says so. A track with no match is skipped like any failed track.
+- The embed page is not an official API, so Spotify can change it and break this without notice. The official Web API can't replace it: since March 2026 it only returns tracks from playlists the signed-in user owns, and apps need an owner on Spotify Premium.
+
 ### Performance warnings
 
 While something is playing, the bot checks every 5 seconds whether listeners are likely hearing stutter:
@@ -242,6 +251,7 @@ After 10 seconds of either, the voice channel status gets a prefix like `⚠️ 
 src/index.ts       entry: check binaries, load config, start client, bot and panel
 src/config.ts      .env loading and validation
 src/ytdlp.ts       yt-dlp/ffmpeg wrapper: binary check, search, resolve, AudioStream
+src/spotify.ts     Spotify links to track lists (embed page) and YouTube matching
 src/health.ts      playback health monitor (event loop delay, audio buffer, CPU)
 src/player/        PlayerManager (guild -> GuildPlayer, voice events) and GuildPlayer (queue, playback, timers)
 src/bot/           slash command definitions, register script, interaction handlers
