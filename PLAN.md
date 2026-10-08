@@ -22,6 +22,8 @@ src/
 public/
   index.html, style.css, app.js    vanilla, phone-width first                                             (C5)
 README.md                                                                                                 (C6)
+scripts/villebot.ps1  Windows launcher: tray icon (NotifyIcon), console start, stop, Startup-folder autostart
+start.cmd, stop.cmd   double-click wrappers
 ```
 
 ## Verified facts (2026-10-08)

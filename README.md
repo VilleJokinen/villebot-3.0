@@ -130,21 +130,6 @@ npm run dev          # tsx watch: restarts on file changes
 npm start            # plain run, no watching
 ```
 
-On Windows there are also double-click launchers in the project folder:
-
-- `start.cmd` runs `tailscale funnel --bg <PANEL_PORT>` and then `npm start` in the background, with no console window. A "V" icon appears in the taskbar's hidden icons (the ^ arrow; drag it onto the taskbar to keep it visible). Right-click it to open the panel, open the log, start/restart/stop the bot, or exit; double-click opens the panel. The icon is grey while the bot is stopped, and a notification pops up if the bot exits on its own or if Tailscale is not running or not connected (checked at startup and every minute; the panel link is down until you reconnect in the Tailscale app). Output goes to `villebot.log`. It refuses to start a second copy if the panel port is already taken.
-- `stop.cmd` stops the bot, however it was started. The funnel stays configured.
-
-To watch the output live in a console instead, run `powershell -ExecutionPolicy Bypass -File scripts\villebot.ps1 start`.
-
-To start the tray icon, bot and funnel automatically every time you log in to Windows, run once:
-
-```
-powershell -ExecutionPolicy Bypass -File scripts\villebot.ps1 autostart-on
-```
-
-This puts a shortcut in your Startup folder. `autostart-off` removes it.
-
 `npm run register` registers the commands globally, so they work in every server the bot is in, including servers added later. It only needs `DISCORD_TOKEN` and `CLIENT_ID`. If commands don't show up right away, restart Discord (Ctrl+R).
 
 On startup the bot validates `.env` (missing variable, `PANEL_PASSWORD` shorter than 8 characters, bad `PANEL_USERS`, `PANEL_PORT` or `PANEL_URL` all exit with a message naming the problem), then checks that `yt-dlp` and `ffmpeg` run (if either is missing it prints install instructions and exits), starts the panel, and logs in to Discord. A healthy start looks like:
@@ -156,6 +141,45 @@ Panel: http://127.0.0.1:3000/
 ```
 
 Set `VOICE_DEPS_REPORT=1` to also print the `@discordjs/voice` dependency report (opus library, encryption, DAVE).
+
+### Windows: tray icon launcher
+
+Instead of keeping a terminal open, you can run the bot in the background with an icon in the taskbar. It also runs `tailscale funnel --bg <PANEL_PORT>` before starting the bot, so the panel link (see [Sharing it with friends](#sharing-it-with-friends-tailscale-funnel)) is up too.
+
+1. **Start:** double-click `start.cmd` in the project folder. No window opens.
+2. **Find the icon:** click the **^** arrow at the right end of the taskbar and look for the round blue **V**. Drag it onto the taskbar to keep it visible.
+3. **Use it:**
+   - Double-click the icon to open the panel (`PANEL_URL`, or `http://127.0.0.1:<PANEL_PORT>/` without it).
+   - Right-click for **Open panel**, **Open log**, **Restart bot** (**Start bot** when it's stopped), **Stop bot** and **Exit**.
+   - Blue means the bot is running, grey means stopped.
+4. **Stop:** right-click the icon > **Exit** (stops the bot and removes the icon). `stop.cmd` also works, however the bot was started, including `npm run dev` in a terminal. The funnel stays configured either way.
+
+Notifications:
+
+- **"VilleBot stopped"**: the bot exited on its own. Right-click > **Open log** to see why, fix it, then **Start bot**.
+- **"Panel link is down"**: Tailscale isn't running or isn't connected. Checked at startup and every minute. The bot keeps working in Discord; open the Tailscale app and connect to bring the link back.
+
+Output goes to `villebot.log` in the project folder. Only one copy runs at a time: if the panel port is already in use, `start.cmd` says so and does nothing.
+
+**Start automatically at Windows login** (run once in the project folder):
+
+```
+powershell -ExecutionPolicy Bypass -File scripts\villebot.ps1 autostart-on
+```
+
+This adds a `VilleBot` shortcut to your Startup folder (Win+R, `shell:startup`), so the tray icon, funnel and bot start every time you log in. To turn it off:
+
+```
+powershell -ExecutionPolicy Bypass -File scripts\villebot.ps1 autostart-off
+```
+
+If you move the project folder, run `autostart-on` again so the shortcut points at the new location.
+
+To watch the bot's output live in a console instead of the tray (the funnel still starts):
+
+```
+powershell -ExecutionPolicy Bypass -File scripts\villebot.ps1 start
+```
 
 ## Control panel
 
@@ -177,7 +201,7 @@ Funnel gives the panel a public HTTPS address, so friends only need the link and
    tailscale funnel --bg 3000
    ```
 
-   (use your `PANEL_PORT` if it isn't 3000). The first run may ask you to allow Funnel in the admin console. `--bg` keeps it running across reboots.
+   (use your `PANEL_PORT` if it isn't 3000). The first run may ask you to allow Funnel in the admin console. `--bg` keeps it running across reboots. On Windows, the [tray launcher](#windows-tray-icon-launcher) runs this for you on every start.
 4. `tailscale funnel status` shows the public URL (`https://<machine>.<tailnet>.ts.net`). Put it in `.env` as `PANEL_URL` and restart the bot.
 5. In Discord, `/link` replies with the panel link and that server's password. Only the person who ran it sees the reply. The link opens the panel with that server selected.
 
@@ -212,6 +236,8 @@ src/player/        PlayerManager (guild -> GuildPlayer, voice events) and GuildP
 src/bot/           slash command definitions, register script, interaction handlers
 src/panel/         Express REST API, WebSocket broadcast, password login
 public/            panel frontend (vanilla HTML/CSS/JS)
+scripts/villebot.ps1  Windows launcher: tray icon, console start, stop, autostart on/off
+start.cmd, stop.cmd   double-click wrappers for villebot.ps1
 PLAN.md            build plan and interface contracts
 ```
 
@@ -227,5 +253,8 @@ PLAN.md            build plan and interface contracts
 - **A server is missing from the panel:** you're logged in with another server's password. Open that server's `/link` URL, or use the owner password. "Too many wrong passwords" clears within 15 minutes, or immediately when the bot restarts.
 - **`/link` says the link isn't set up:** set `PANEL_URL` in `.env` and restart. If it says the server has no password, add the `PANEL_PASSWORD_<serverId>` line it shows and restart.
 - **Panel won't start (address error):** `PANEL_HOST` isn't an address on this machine. Set it back to `127.0.0.1`.
+- **`start.cmd` says something is already listening on the port:** the bot is already running (maybe from autostart or a terminal). Use the tray icon or `stop.cmd` first.
+- **Tray icon doesn't appear:** look under the ^ arrow in the taskbar. If it's not there, run `powershell -ExecutionPolicy Bypass -File scripts\villebot.ps1 start` to see the error in a console.
+- **Tray icon stays after `stop.cmd`:** a leftover image; it disappears when you hover over it.
 - **`Cannot find module ...`:** run `npm install`.
 - **Node version error / syntax errors on startup:** `node --version` must be >= 22.12.
