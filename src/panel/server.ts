@@ -10,6 +10,7 @@ import type { LoopMode, GuildPlayerState, QueueItem } from '../player/types.js';
 import { resolve as resolveInput, search } from '../ytdlp.js';
 import { accessOf, canAccess, createAuth, panelUser, type Access } from './auth.js';
 import type { PanelUser } from '../config.js';
+import type { Health, HealthMonitor } from '../health.js';
 
 const PUBLIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../public');
 const PING_INTERVAL_MS = 30_000;
@@ -54,8 +55,9 @@ export async function startPanel(opts: {
   serverPasswords: ReadonlyMap<string, string>;
   client: Client;
   manager: PlayerManager;
+  health: HealthMonitor;
 }): Promise<http.Server> {
-  const { host, port, client, manager } = opts;
+  const { host, port, client, manager, health } = opts;
   const auth = createAuth(opts);
   const app = express();
   app.disable('x-powered-by');
@@ -261,6 +263,7 @@ export async function startPanel(opts: {
       const access = accessByWs.get(ws);
       const states = access ? manager.states().filter((s) => canAccess(access, s.guildId)) : [];
       send(ws, { type: 'snapshot', states });
+      send(ws, { type: 'health', health: health.health });
     } catch (err) {
       console.error('[panel]', 'snapshot failed', err);
     }
@@ -269,8 +272,13 @@ export async function startPanel(opts: {
   const onState = (state: GuildPlayerState): void => broadcast(state.guildId, { type: 'state', state });
   const onTrackError = (guildId: string, item: QueueItem, message: string): void =>
     broadcast(guildId, { type: 'trackError', guildId, title: item.title, message });
+  // Host-wide, so every login sees it: it affects whichever server they're listening in.
+  const onHealth = (h: Health): void => {
+    for (const ws of wss.clients) send(ws, { type: 'health', health: h });
+  };
   manager.on('state', onState);
   manager.on('trackError', onTrackError);
+  health.on('change', onHealth);
 
   const pinger = setInterval(() => {
     for (const ws of wss.clients) {
@@ -292,6 +300,7 @@ export async function startPanel(opts: {
     clearInterval(pinger);
     manager.off('state', onState);
     manager.off('trackError', onTrackError);
+    health.off('change', onHealth);
     for (const ws of wss.clients) ws.terminate();
     wss.close();
   });

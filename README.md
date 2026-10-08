@@ -73,7 +73,7 @@ brew install yt-dlp ffmpeg
 
    Permission integer: `1<<10` (ViewChannel) + `1<<11` (SendMessages) + `1<<20` (Connect) + `1<<21` (Speak) + `1<<48` (SetVoiceChannelStatus) = 1024 + 2048 + 1048576 + 2097152 + 281474976710656 = **281474979859456**.
 
-   Set Voice Channel Status lets the bot show the current song and the next one in the voice channel's status line. It is optional; without it the bot plays normally and logs one warning.
+   Set Voice Channel Status lets the bot show the current song and the next one in the voice channel's status line, plus a warning when the host PC can't keep up (see [Performance warnings](#performance-warnings)). It is optional; without it the bot plays normally and logs one warning.
 
 7. Invite URL (replace `<CLIENT_ID>`), open it and add the bot to each server you want it in:
 
@@ -158,6 +158,7 @@ Notifications:
 
 - **"VilleBot stopped"**: the bot exited on its own. Right-click > **Open log** to see why, fix it, then **Start bot**.
 - **"Panel link is down"**: Tailscale isn't running or isn't connected. Checked at startup and every minute. The bot keeps working in Discord; open the Tailscale app and connect to bring the link back.
+- **"Audio may stutter"**: this PC can't keep up with playback. The message says why and what to try; see [Performance warnings](#performance-warnings). Shown at most every 10 minutes; while it lasts, the tray menu's status line says "audio lagging".
 
 Output goes to `villebot.log` in the project folder. Only one copy runs at a time: if the panel port is already in use, `start.cmd` says so and does nothing.
 
@@ -226,12 +227,22 @@ Security:
 - Volume is per server, defaults to 50, and resets on restart. Queues are in memory too. There is no database, by design.
 - Playlists are capped at 200 entries; private and deleted videos are skipped.
 
+### Performance warnings
+
+While something is playing, the bot checks every 5 seconds whether listeners are likely hearing stutter:
+
+- **Host lagging**: the bot sends a voice packet every 20 ms. If those go out more than 50 ms late, the PC is too busy (a game, a build, a video export). Close heavy programs.
+- **Slow download**: the bot keeps about 10 seconds of audio buffered ahead. If that drops under 1 second, audio is arriving slower than it plays. Check the PC's internet connection. If the CPU is above 85% at the same time, it counts as "Host lagging" instead.
+
+After 10 seconds of either, the voice channel status gets a prefix like `⚠️ Host lagging · 🎶 Song`, so listeners know it's the host and not their connection, and the control panel shows a warning banner to every login. The log gets a `[health] warn: ...` line with the details and CPU usage, which the [tray launcher](#windows-tray-icon-launcher) shows as a notification. The warning clears after 30 seconds without problems, or when playback stops.
+
 ## Project layout
 
 ```
 src/index.ts       entry: check binaries, load config, start client, bot and panel
 src/config.ts      .env loading and validation
 src/ytdlp.ts       yt-dlp/ffmpeg wrapper: binary check, search, resolve, AudioStream
+src/health.ts      playback health monitor (event loop delay, audio buffer, CPU)
 src/player/        PlayerManager (guild -> GuildPlayer, voice events) and GuildPlayer (queue, playback, timers)
 src/bot/           slash command definitions, register script, interaction handlers
 src/panel/         Express REST API, WebSocket broadcast, password login

@@ -1,6 +1,7 @@
 import type { Client } from 'discord.js';
 import type { PlayerManager } from '../player/PlayerManager.js';
 import type { GuildPlayerState } from '../player/types.js';
+import type { HealthIssue, HealthMonitor } from '../health.js';
 
 /** Discord caps voice channel status at 500 characters. */
 const MAX_STATUS = 500;
@@ -11,13 +12,20 @@ function clip(s: string, max: number): string {
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;
 }
 
+/** Shown in front of the song so listeners know the stutter is the host, not Discord or their connection. */
+const WARNING: Record<HealthIssue, string> = {
+  busy: '⚠️ Host lagging',
+  download: '⚠️ Slow download',
+};
+
 /** Status text for a guild's player: current track and what plays next, or '' to clear. */
-function statusText(s: GuildPlayerState): string {
+function statusText(s: GuildPlayerState, issue: HealthIssue | null): string {
   if (!s.current) return '';
   // loop=track replays the current track; loop=queue wraps back to it once the queue runs out.
   const next = s.loop === 'track' ? s.current : (s.queue[0] ?? (s.loop === 'queue' ? s.current : null));
   const now = `🎶 ${clip(s.current.title, 200)}`;
-  const text = next ? `${now} · Next: ${clip(next.title, 200)}` : now;
+  const song = next ? `${now} · Next: ${clip(next.title, 200)}` : now;
+  const text = issue ? `${WARNING[issue]} · ${song}` : song;
   return clip(text, MAX_STATUS);
 }
 
@@ -28,9 +36,10 @@ interface Applied {
 
 /**
  * Mirrors each guild's now-playing / up-next into the status line of the voice channel the bot is in.
+ * While the host can't keep up, the status is prefixed with a warning.
  * Needs the Set Voice Channel Status permission; failures are logged and otherwise ignored.
  */
-export function syncVoiceStatus(client: Client, manager: PlayerManager): void {
+export function syncVoiceStatus(client: Client, manager: PlayerManager, health: HealthMonitor): void {
   const applied = new Map<string, Applied>();
   const timers = new Map<string, NodeJS.Timeout>();
   const latest = new Map<string, GuildPlayerState>();
@@ -46,7 +55,7 @@ export function syncVoiceStatus(client: Client, manager: PlayerManager): void {
     const s = latest.get(guildId);
     if (!s) return;
     const prev = applied.get(guildId);
-    const status = s.channelId ? statusText(s) : '';
+    const status = s.channelId ? statusText(s, health.health.issue) : '';
 
     // Bot moved or left: clear the old channel's status. Usually fails once we're no longer connected
     // there (unless we also have Manage Channels), which is fine.
@@ -79,19 +88,26 @@ export function syncVoiceStatus(client: Client, manager: PlayerManager): void {
     }
   };
 
-  manager.on('state', (s) => {
-    latest.set(s.guildId, s);
-    const existing = timers.get(s.guildId);
+  const schedule = (guildId: string): void => {
+    const existing = timers.get(guildId);
     if (existing) clearTimeout(existing);
     timers.set(
-      s.guildId,
+      guildId,
       setTimeout(() => {
-        timers.delete(s.guildId);
-        const run = (chains.get(s.guildId) ?? Promise.resolve())
-          .then(() => apply(s.guildId))
+        timers.delete(guildId);
+        const run = (chains.get(guildId) ?? Promise.resolve())
+          .then(() => apply(guildId))
           .catch((err) => console.error('[bot]', 'voice status sync failed', err));
-        chains.set(s.guildId, run);
+        chains.set(guildId, run);
       }, DEBOUNCE_MS),
     );
+  };
+
+  manager.on('state', (s) => {
+    latest.set(s.guildId, s);
+    schedule(s.guildId);
+  });
+  health.on('change', () => {
+    for (const guildId of latest.keys()) schedule(guildId);
   });
 }

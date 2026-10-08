@@ -7,6 +7,7 @@ import { checkBinaries } from './ytdlp.js';
 import { PlayerManager } from './player/index.js';
 import { createBot } from './bot/index.js';
 import { startPanel } from './panel/server.js';
+import { HealthMonitor } from './health.js';
 
 process.on('unhandledRejection', (err) => console.error('[process] unhandled rejection', err));
 process.on('uncaughtException', (err) => console.error('[process] uncaught exception', err));
@@ -47,7 +48,9 @@ async function main(): Promise<void> {
     allowedMentions: { parse: [] },
   });
   const manager = new PlayerManager(client);
-  createBot(client, manager, { panelUrl: config.panelUrl, serverPasswords: config.serverPasswords });
+  const health = new HealthMonitor(manager);
+  health.start();
+  createBot(client, manager, health, { panelUrl: config.panelUrl, serverPasswords: config.serverPasswords });
 
   client.once(Events.ClientReady, (c) => {
     const guilds = c.guilds.cache.map((g) => g.name).join(', ') || 'none';
@@ -66,6 +69,7 @@ async function main(): Promise<void> {
       serverPasswords: config.serverPasswords,
       client,
       manager,
+      health,
     });
   } catch (err) {
     fail(`Control panel failed to start: ${(err as Error).message}`);
@@ -76,6 +80,7 @@ async function main(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log(`[shutdown] ${signal}: leaving voice channels and stopping`);
+    health.stop();
     try {
       manager.destroyAll();
     } catch (err) {

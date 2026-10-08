@@ -559,6 +559,20 @@ export class GuildPlayer extends EventEmitter<PlayerEvents> {
 
   // ---------------------------------------------------------------- state
 
+  /** True while a track is actually being sent to the voice channel (not paused, not between tracks). */
+  get playing(): boolean {
+    return this.current !== null && !this.paused && this.player.state.status === AudioPlayerStatus.Playing;
+  }
+
+  /**
+   * Audio buffered ahead of the player in ms, once the current track is past its start-up. Null when
+   * it says nothing about stalls: nothing playing, still starting, or the download already finished.
+   */
+  bufferedMs(): number | null {
+    if (!this.playing || (this.resource?.playbackDuration ?? 0) < 5_000) return null;
+    return this.audio?.bufferedMs ?? null;
+  }
+
   getState(): GuildPlayerState {
     const guild = this.client.guilds.cache.get(this.guildId);
     const channel = this.channelId ? guild?.channels.cache.get(this.channelId) : undefined;

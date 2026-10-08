@@ -361,6 +361,15 @@ export class AudioStream extends EventEmitter<{ error: [Error] }> {
   private ffCode: number | null | undefined;
   private failTimer: NodeJS.Timeout | undefined;
 
+  /**
+   * Decoded audio waiting for the player, in ms, or null once ffmpeg has exited (the buffer then
+   * drains to the end of the track, which is not a shortfall).
+   */
+  get bufferedMs(): number | null {
+    if (this.killed || this.failed || this.ffCode !== undefined) return null;
+    return (this.buffer.readableLength + this.buffer.writableLength) / ((48_000 * 2 * 2) / 1000);
+  }
+
   constructor(url: string) {
     super();
 

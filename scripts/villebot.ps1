@@ -147,6 +147,10 @@ function Start-Tray {
     $script:bot = $null
     $script:stopping = $false
     $script:tailscaleProblem = $null
+    $script:healthProblem = $null
+    $script:lastHealthAlert = [DateTime]::MinValue
+    $script:logPos = 0
+    $script:logTail = ''
 
     $tray = New-Object System.Windows.Forms.NotifyIcon
     $menu = New-Object System.Windows.Forms.ContextMenuStrip
@@ -166,13 +170,19 @@ function Start-Tray {
         $running = $script:bot -and -not $script:bot.HasExited
         $tray.Icon = if ($running) { $runningIcon } else { $stoppedIcon }
         $tray.Text = if ($running) { 'VilleBot: running' } else { 'VilleBot: stopped' }
-        $status.Text = if ($script:tailscaleProblem) { "$($tray.Text) (Tailscale down)" } else { $tray.Text }
+        $notes = @()
+        if ($running -and $script:healthProblem) { $notes += 'audio lagging' }
+        if ($script:tailscaleProblem) { $notes += 'Tailscale down' }
+        $status.Text = if ($notes) { "$($tray.Text) ($($notes -join ', '))" } else { $tray.Text }
         $startItem.Text = if ($running) { 'Restart bot' } else { 'Start bot' }
         $stopItem.Enabled = $running
     }
 
     function Start-BotProcess {
         Add-Content -Path $logFile -Value "`r`n=== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') starting ==="
+        $script:logPos = (Get-Item $logFile).Length
+        $script:logTail = ''
+        $script:healthProblem = $null
         # cmd handles the redirection; this console is hidden, so the children get no window either.
         if (-not $script:tailscaleProblem) { cmd /c "tailscale funnel --bg $port >> villebot.log 2>&1" }
         $psi = New-Object System.Diagnostics.ProcessStartInfo 'cmd.exe', '/c npm start >> villebot.log 2>&1'
@@ -216,12 +226,46 @@ function Start-Tray {
         Update-State
     }
 
+    # The bot logs "[health] warn: ..." when the PC can't keep up with playback and "[health] ok: ..." once
+    # it does again. Follow the log for those and alert, at most every 10 minutes so a borderline PC doesn't nag.
+    function Test-Health {
+        try {
+            $fs = [System.IO.File]::Open($logFile, 'Open', 'Read', 'ReadWrite')
+        } catch {
+            return
+        }
+        try {
+            if ($fs.Length -lt $script:logPos) { $script:logPos = 0 } # log was cleared
+            if ($fs.Length -eq $script:logPos) { return }
+            [void]$fs.Seek($script:logPos, 'Begin')
+            $text = $script:logTail + (New-Object System.IO.StreamReader $fs).ReadToEnd()
+            $script:logPos = $fs.Length
+        } finally {
+            $fs.Dispose()
+        }
+        $lines = $text -split "`r?`n"
+        $script:logTail = $lines[-1] # possibly half-written; finish it next time
+        foreach ($line in ($lines | Select-Object -SkipLast 1)) {
+            if ($line -match '^\[health\] warn: (.+)$') {
+                $script:healthProblem = $Matches[1]
+                if (((Get-Date) - $script:lastHealthAlert).TotalMinutes -ge 10) {
+                    $script:lastHealthAlert = Get-Date
+                    $tray.ShowBalloonTip(10000, 'VilleBot: audio may stutter', $Matches[1], 'Warning')
+                }
+            } elseif ($line -match '^\[health\] ok') {
+                $script:healthProblem = $null
+            }
+        }
+        Update-State
+    }
+
     $timer = New-Object System.Windows.Forms.Timer
     $timer.Interval = 2000
     $script:ticks = 0
     $timer.add_Tick({
         $script:ticks++
         if ($script:ticks % 30 -eq 0) { Test-Tailscale } # every minute
+        if ($script:bot -and -not $script:bot.HasExited) { Test-Health }
         if ($script:bot -and $script:bot.HasExited -and $tray.Text -eq 'VilleBot: running') {
             Update-State
             if (-not $script:stopping) {

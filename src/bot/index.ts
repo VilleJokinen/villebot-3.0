@@ -10,6 +10,7 @@ import type { GuildPlayer } from '../player/GuildPlayer.js';
 import type { PlayerManager } from '../player/PlayerManager.js';
 import { resolve } from '../ytdlp.js';
 import { syncVoiceStatus } from './voiceStatus.js';
+import type { HealthMonitor } from '../health.js';
 
 /** Error with a message that is safe and useful to show to the user. */
 class UserError extends Error {}
@@ -238,7 +239,7 @@ function npEmbed(player: GuildPlayer): EmbedBuilder | null {
   return embed;
 }
 
-export function createBot(client: Client, manager: PlayerManager, panel: PanelInfo): void {
+export function createBot(client: Client, manager: PlayerManager, health: HealthMonitor, panel: PanelInfo): void {
   client.on('interactionCreate', (interaction: Interaction) => {
     if (!interaction.isChatInputCommand() || !interaction.inGuild()) return;
     handle(interaction as ChatInputCommandInteraction<'cached' | 'raw'>, manager, panel).catch((err) =>
@@ -246,7 +247,7 @@ export function createBot(client: Client, manager: PlayerManager, panel: PanelIn
     );
   });
 
-  syncVoiceStatus(client, manager);
+  syncVoiceStatus(client, manager, health);
 
   manager.on('trackError', (guildId, item, message) => {
     void (async () => {

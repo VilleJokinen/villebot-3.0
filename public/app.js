@@ -98,6 +98,19 @@ function applyState(st) {
 
 const post = (action, body) => api('POST', `/api/guilds/${S.gid}/${action}`, body).then(applyState);
 
+/** Host-wide playback health from the bot; a banner while audio may stutter. */
+const HEALTH_TITLES = {
+  busy: "Audio may stutter: the bot's host PC can't keep up",
+  download: "Audio may stutter: the bot's host is downloading too slowly",
+};
+function renderHealth(h) {
+  const title = h && HEALTH_TITLES[h.issue];
+  $('health').hidden = !title;
+  if (!title) return;
+  $('health-title').textContent = title;
+  $('health-detail').textContent = h.detail ? `(${h.detail})` : '';
+}
+
 // ---------------------------------------------------------------- login
 function closeWs() {
   clearTimeout(S.wsTimer);
@@ -109,6 +122,7 @@ function showLogin(note = '', adding = false) {
   if (!adding) {
     S.authed = false;
     closeWs();
+    renderHealth(null);
     $('me').hidden = true;
   }
   $('login-note').textContent = note;
@@ -519,6 +533,8 @@ function connectWs() {
       applyState(m.state);
     } else if (m.type === 'trackError') {
       toast(`Skipped ${m.title}: ${m.message}`);
+    } else if (m.type === 'health') {
+      renderHealth(m.health);
     }
   };
   ws.onclose = () => {
