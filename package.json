@@ -1,0 +1,34 @@
+{
+  "name": "villebot",
+  "version": "3.0.0",
+  "private": true,
+  "description": "Private self-hosted Discord music bot with a local web control panel",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "register": "tsx src/bot/register.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@discordjs/voice": "^0.19.2",
+    "discord.js": "^14.27.0",
+    "dotenv": "^18.0.6",
+    "express": "^5.2.1",
+    "opusscript": "^0.1.1",
+    "tsx": "^4.23.15",
+    "ws": "^8.22.0"
+  },
+  "optionalDependencies": {
+    "@discordjs/opus": "^0.10.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.20.5",
+    "@types/ws": "^8.18.2",
+    "typescript": "^5.9.3"
+  }
+}
