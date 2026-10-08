@@ -146,13 +146,13 @@ Set `VOICE_DEPS_REPORT=1` to also print the `@discordjs/voice` dependency report
 
 Instead of keeping a terminal open, you can run the bot in the background with an icon in the taskbar. It also keeps an eye on the Cloudflare Tunnel that serves the panel link (see [Sharing it with friends](#sharing-it-with-friends-cloudflare-tunnel)). The tunnel runs as its own Windows service, so it doesn't depend on the tray.
 
-1. **Start:** double-click `start.cmd` in the project folder. No window opens.
+1. **Start:** double-click `start.cmd` in the project folder. A window may flash for a moment; nothing stays open.
 2. **Find the icon:** click the **^** arrow at the right end of the taskbar and look for the round blue **V**. Drag it onto the taskbar to keep it visible.
 3. **Use it:**
    - Double-click the icon to open the panel (`PANEL_URL`, or `http://127.0.0.1:<PANEL_PORT>/` without it).
    - Right-click for **Open panel**, **Open log**, **Restart bot** (**Start bot** when it's stopped), **Stop bot** and **Exit**.
    - Blue means the bot is running, grey means stopped.
-4. **Stop:** right-click the icon > **Exit** (stops the bot and removes the icon). `stop.cmd` also works, however the bot was started, including `npm run dev` in a terminal. The tunnel keeps running either way.
+4. **Stop:** right-click the icon > **Exit** (stops the bot and removes the icon). `stop.cmd` also works, however the bot was started, including `npm run dev` in a terminal. The tunnel keeps running either way. The bot never outlives the tray: if the tray process ends some other way (Task Manager, a crash), the bot stops with it.
 
 Notifications:
 
@@ -174,7 +174,7 @@ This adds a `VilleBot` shortcut to your Startup folder (Win+R, `shell:startup`),
 powershell -ExecutionPolicy Bypass -File scripts\villebot.ps1 autostart-off
 ```
 
-If you move the project folder, run `autostart-on` again so the shortcut points at the new location.
+If you move the project folder, run `autostart-on` again so the shortcut points at the new location. Also run it again if you turned autostart on before October 9, 2026: older shortcuts could leave an empty console window open.
 
 To watch the bot's output live in a console instead of the tray:
 

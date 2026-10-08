@@ -95,17 +95,74 @@ function Stop-Bot {
 
     # Started some other way (e.g. npm run dev in a terminal): stop whatever owns the panel port if it's node.
     $listener = Get-Listener (Get-PanelPort)
-    $owner = if ($listener) { Get-Process -Id $listener.OwningProcess -ErrorAction SilentlyContinue }
-    if ($owner -and $owner.ProcessName -eq 'node') {
-        taskkill /PID $owner.Id /T /F | Out-Null
-        Write-Host 'Bot stopped.'
-    } else {
+    $owner = if ($listener) { Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.OwningProcess)" }
+    if (-not $owner -or $owner.Name -ne 'node.exe') {
         Write-Host 'Bot is not running.'
+        return
+    }
+    # Climb to the outermost npm/tsx process (npm > cmd > tsx > node) so none of the wrappers is left behind,
+    # stopping before the terminal the user started it from.
+    $top = $owner
+    while ($true) {
+        $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$($top.ParentProcessId)"
+        if (-not $parent -or $parent.Name -notin 'node.exe', 'cmd.exe' -or $parent.CommandLine -notmatch 'npm|tsx') { break }
+        $top = $parent
+    }
+    taskkill /PID $top.ProcessId /T /F | Out-Null
+    Write-Host 'Bot stopped.'
+}
+
+# A job object that kills every process in it once the tray process is gone, however it ends (Exit,
+# Task Manager, a crash), so the bot can't keep playing without its tray icon.
+$killOnCloseJob = @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class KillOnCloseJob {
+    [StructLayout(LayoutKind.Sequential)]
+    struct BasicLimits {
+        public long PerProcessUserTimeLimit, PerJobUserTimeLimit;
+        public uint LimitFlags;
+        public UIntPtr MinimumWorkingSetSize, MaximumWorkingSetSize;
+        public uint ActiveProcessLimit;
+        public UIntPtr Affinity;
+        public uint PriorityClass, SchedulingClass;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct ExtendedLimits {
+        public BasicLimits Basic;
+        public ulong ReadOps, WriteOps, OtherOps, ReadBytes, WriteBytes, OtherBytes;
+        public UIntPtr ProcessMemoryLimit, JobMemoryLimit, PeakProcessMemoryUsed, PeakJobMemoryUsed;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern IntPtr CreateJobObject(IntPtr attributes, string name);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool SetInformationJobObject(IntPtr job, int infoClass, ref ExtendedLimits info, uint length);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+
+    // Never closed on purpose: Windows closes it when this process exits, which kills the job.
+    static IntPtr job;
+
+    public static void Add(IntPtr process) {
+        if (job == IntPtr.Zero) {
+            job = CreateJobObject(IntPtr.Zero, null);
+            var info = new ExtendedLimits();
+            info.Basic.LimitFlags = 0x2000; // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+            if (!SetInformationJobObject(job, 9, ref info, (uint)Marshal.SizeOf(typeof(ExtendedLimits)))) {
+                throw new System.ComponentModel.Win32Exception();
+            }
+        }
+        if (!AssignProcessToJobObject(job, process)) throw new System.ComponentModel.Win32Exception();
     }
 }
+'@
 
 function Start-Tray {
     Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+    Add-Type -TypeDefinition $killOnCloseJob
 
     $mutex = New-Object System.Threading.Mutex($false, 'Local\VilleBotTray')
     if (-not $mutex.WaitOne(0)) { exit 0 } # the tray is already running
@@ -181,6 +238,8 @@ function Start-Tray {
         $psi.CreateNoWindow = $true
         $script:stopping = $false
         $script:bot = [System.Diagnostics.Process]::Start($psi)
+        # npm and node are started after this by cmd, and inherit the job.
+        [KillOnCloseJob]::Add($script:bot.Handle)
         Update-State
     }
 
@@ -286,10 +345,11 @@ switch ($Action) {
     'autostart-on' {
         $shell = New-Object -ComObject WScript.Shell
         $lnk = $shell.CreateShortcut($shortcut)
-        $lnk.TargetPath = Join-Path $PSHOME 'powershell.exe'
-        $lnk.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$PSCommandPath`" tray"
+        # conhost --headless gives PowerShell a console with no window. Plain -WindowStyle Hidden can't hide it
+        # when Windows Terminal is the default terminal app, and closing that window would kill the tray.
+        $lnk.TargetPath = Join-Path $env:windir 'System32\conhost.exe'
+        $lnk.Arguments = "--headless `"$(Join-Path $PSHOME 'powershell.exe')`" -NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" tray"
         $lnk.WorkingDirectory = $root
-        $lnk.WindowStyle = 7 # minimized, so the console doesn't flash before -WindowStyle Hidden applies
         $lnk.Save()
         Write-Host 'Autostart on: the tray icon and bot start when you log in.'
     }
