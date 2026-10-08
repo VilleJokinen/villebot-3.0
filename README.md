@@ -130,6 +130,21 @@ npm run dev          # tsx watch: restarts on file changes
 npm start            # plain run, no watching
 ```
 
+On Windows there are also double-click launchers in the project folder:
+
+- `start.cmd` runs `tailscale funnel --bg <PANEL_PORT>` and then `npm start` in the background, with no console window. A "V" icon appears in the taskbar's hidden icons (the ^ arrow; drag it onto the taskbar to keep it visible). Right-click it to open the panel, open the log, start/restart/stop the bot, or exit; double-click opens the panel. The icon is grey while the bot is stopped, and a notification pops up if the bot exits on its own or if Tailscale is not running or not connected (checked at startup and every minute; the panel link is down until you reconnect in the Tailscale app). Output goes to `villebot.log`. It refuses to start a second copy if the panel port is already taken.
+- `stop.cmd` stops the bot, however it was started. The funnel stays configured.
+
+To watch the output live in a console instead, run `powershell -ExecutionPolicy Bypass -File scripts\villebot.ps1 start`.
+
+To start the tray icon, bot and funnel automatically every time you log in to Windows, run once:
+
+```
+powershell -ExecutionPolicy Bypass -File scripts\villebot.ps1 autostart-on
+```
+
+This puts a shortcut in your Startup folder. `autostart-off` removes it.
+
 `npm run register` registers the commands globally, so they work in every server the bot is in, including servers added later. It only needs `DISCORD_TOKEN` and `CLIENT_ID`. If commands don't show up right away, restart Discord (Ctrl+R).
 
 On startup the bot validates `.env` (missing variable, `PANEL_PASSWORD` shorter than 8 characters, bad `PANEL_USERS`, `PANEL_PORT` or `PANEL_URL` all exit with a message naming the problem), then checks that `yt-dlp` and `ffmpeg` run (if either is missing it prints install instructions and exits), starts the panel, and logs in to Discord. A healthy start looks like:
