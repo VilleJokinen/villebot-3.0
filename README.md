@@ -113,7 +113,7 @@ At least one login of any kind is required. Generate a token with:
 ```
 node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))"
 ```
-| `PANEL_URL` | Public panel address that `/link` sends, e.g. `https://my-pc.tail1234.ts.net`. Optional; without it `/link` says the link isn't set up. |
+| `PANEL_URL` | Public panel address that `/link` sends, e.g. `https://villebot.example.com`. Optional; without it `/link` says the link isn't set up. |
 
 To get a server ID: in Discord, User Settings > Advanced > enable **Developer Mode**, then right-click the server icon > **Copy Server ID**. Or run `/link` in that server: without a password it replies with the exact line to add.
 
@@ -144,7 +144,7 @@ Set `VOICE_DEPS_REPORT=1` to also print the `@discordjs/voice` dependency report
 
 ### Windows: tray icon launcher
 
-Instead of keeping a terminal open, you can run the bot in the background with an icon in the taskbar. It also runs `tailscale funnel --bg <PANEL_PORT>` before starting the bot, so the panel link (see [Sharing it with friends](#sharing-it-with-friends-tailscale-funnel)) is up too.
+Instead of keeping a terminal open, you can run the bot in the background with an icon in the taskbar. It also keeps an eye on the Cloudflare Tunnel that serves the panel link (see [Sharing it with friends](#sharing-it-with-friends-cloudflare-tunnel)). The tunnel runs as its own Windows service, so it doesn't depend on the tray.
 
 1. **Start:** double-click `start.cmd` in the project folder. No window opens.
 2. **Find the icon:** click the **^** arrow at the right end of the taskbar and look for the round blue **V**. Drag it onto the taskbar to keep it visible.
@@ -152,12 +152,12 @@ Instead of keeping a terminal open, you can run the bot in the background with a
    - Double-click the icon to open the panel (`PANEL_URL`, or `http://127.0.0.1:<PANEL_PORT>/` without it).
    - Right-click for **Open panel**, **Open log**, **Restart bot** (**Start bot** when it's stopped), **Stop bot** and **Exit**.
    - Blue means the bot is running, grey means stopped.
-4. **Stop:** right-click the icon > **Exit** (stops the bot and removes the icon). `stop.cmd` also works, however the bot was started, including `npm run dev` in a terminal. The funnel stays configured either way.
+4. **Stop:** right-click the icon > **Exit** (stops the bot and removes the icon). `stop.cmd` also works, however the bot was started, including `npm run dev` in a terminal. The tunnel keeps running either way.
 
 Notifications:
 
 - **"VilleBot stopped"**: the bot exited on its own. Right-click > **Open log** to see why, fix it, then **Start bot**.
-- **"Panel link is down"**: Tailscale isn't running or isn't connected. Checked at startup and every minute. The bot keeps working in Discord; open the Tailscale app and connect to bring the link back.
+- **"Panel link is down"**: the `cloudflared` Windows service isn't installed or isn't running. Checked at startup and every minute. The bot keeps working in Discord. Start the **Cloudflared** service in `services.msc` (or run `net start cloudflared` as administrator) to bring the link back.
 - **"Audio may stutter"**: this PC can't keep up with playback. The message says why and what to try; see [Performance warnings](#performance-warnings). Shown at most every 10 minutes; while it lasts, the tray menu's status line says "audio lagging".
 
 Output goes to `villebot.log` in the project folder. Only one copy runs at a time: if the panel port is already in use, `start.cmd` says so and does nothing.
@@ -168,7 +168,7 @@ Output goes to `villebot.log` in the project folder. Only one copy runs at a tim
 powershell -ExecutionPolicy Bypass -File scripts\villebot.ps1 autostart-on
 ```
 
-This adds a `VilleBot` shortcut to your Startup folder (Win+R, `shell:startup`), so the tray icon, funnel and bot start every time you log in. To turn it off:
+This adds a `VilleBot` shortcut to your Startup folder (Win+R, `shell:startup`), so the tray icon and bot start every time you log in. To turn it off:
 
 ```
 powershell -ExecutionPolicy Bypass -File scripts\villebot.ps1 autostart-off
@@ -176,7 +176,7 @@ powershell -ExecutionPolicy Bypass -File scripts\villebot.ps1 autostart-off
 
 If you move the project folder, run `autostart-on` again so the shortcut points at the new location.
 
-To watch the bot's output live in a console instead of the tray (the funnel still starts):
+To watch the bot's output live in a console instead of the tray:
 
 ```
 powershell -ExecutionPolicy Bypass -File scripts\villebot.ps1 start
@@ -190,31 +190,28 @@ Personal tokens can be typed into the login screen, or sent as a link that logs 
 
 The login lasts 30 days (HttpOnly cookie). One browser can be logged in to several servers: opening a `/link` URL for a server you're not logged in to asks for that server's password and keeps the others. **Log out** in the top bar ends all of them on that device. Changing a password and restarting logs out everyone who used it. Give each server a different password; two servers with the same password are unlocked together.
 
-### Sharing it with friends (Tailscale Funnel)
+### Sharing it with friends (Cloudflare Tunnel)
 
-Funnel gives the panel a public HTTPS address, so friends only need the link and the password. No Tailscale account or app is needed on their side.
+A Cloudflare Tunnel gives the panel a public HTTPS address on your own domain, e.g. `https://villebot.example.com`, so friends only need the link and the password. The tunnel connects out from your PC to Cloudflare, so no ports are opened on your router and your home IP isn't exposed. It's free.
 
-1. Install Tailscale on the machine that runs the bot (https://tailscale.com/download) and sign in.
-2. In the Tailscale admin console, **DNS** page: enable **MagicDNS** and **HTTPS Certificates**.
-3. Keep `PANEL_HOST=127.0.0.1` in `.env`. On the bot machine run:
+You need a domain whose DNS is managed by Cloudflare (its nameservers point to Cloudflare).
 
-   ```
-   tailscale funnel --bg 3000
-   ```
+1. Install `cloudflared` on the machine that runs the bot: `winget install --id Cloudflare.cloudflared`.
+2. In the Cloudflare dashboard, go to **Zero Trust** > **Networks** > **Tunnels** > **Create a tunnel**. Pick **Cloudflared**, give it a name (e.g. `villebot`).
+3. On the install step, choose **Windows** and copy the `cloudflared.exe service install <token>` command. Run it in an **administrator** terminal. This installs a `Cloudflared` Windows service that starts with Windows, before anyone logs in. Treat the token like a password: anyone with it can run your tunnel.
+4. Add a **public hostname**: pick a subdomain and your domain (e.g. `villebot` + `example.com`), service type **HTTP**, URL `localhost:3000` (your `PANEL_PORT`). Cloudflare creates the DNS record and the HTTPS certificate for you.
+5. Keep `PANEL_HOST=127.0.0.1` in `.env`. Set `PANEL_URL=https://villebot.example.com` (your hostname) and restart the bot.
+6. In Discord, `/link` replies with the panel link and that server's password. Only the person who ran it sees the reply. The link opens the panel with that server selected.
 
-   (use your `PANEL_PORT` if it isn't 3000). The first run may ask you to allow Funnel in the admin console. `--bg` keeps it running across reboots. On Windows, the [tray launcher](#windows-tray-icon-launcher) runs this for you on every start.
-4. `tailscale funnel status` shows the public URL (`https://<machine>.<tailnet>.ts.net`). Put it in `.env` as `PANEL_URL` and restart the bot.
-5. In Discord, `/link` replies with the panel link and that server's password. Only the person who ran it sees the reply. The link opens the panel with that server selected.
-
-To stop sharing: `tailscale funnel --bg 3000 off`.
+To stop sharing: delete the public hostname in the tunnel's settings, or stop the service (`net stop cloudflared` as administrator). `cloudflared.exe service uninstall` removes the service.
 
 Security:
 
 - The panel is on the public internet. The passwords are the only thing protecting it, and anyone in a server can get that server's password with `/link`. Use passwords you don't use anywhere else. Keep the owner password to yourself.
 - Wrong passwords are slowed down (1 second each). After 20 wrong tries in 15 minutes, all logins pause until older failures drop out of that window. People who are already logged in are not affected. The bot logs a warning when this happens.
 - If a password leaks, change it in `.env` and restart. Everyone who used it is logged out.
-- Don't bind `PANEL_HOST` to `0.0.0.0` and don't port-forward the panel. Funnel already provides HTTPS without opening ports on your router.
-- Enabling HTTPS certificates publishes the machine name in public certificate-transparency logs, so don't use a sensitive machine name.
+- Don't bind `PANEL_HOST` to `0.0.0.0` and don't port-forward the panel. The tunnel already provides HTTPS without opening ports on your router.
+- The hostname ends up in public certificate-transparency logs, so assume people can find it. The password is what keeps them out.
 - GitHub Pages or any other static host won't work for the panel. It must be served by the bot itself: the API is same-origin with a SameSite=Strict cookie.
 
 ## Behaviour

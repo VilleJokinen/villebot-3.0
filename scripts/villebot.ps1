@@ -1,9 +1,10 @@
-# Starts Tailscale Funnel and the bot, stops them, or toggles starting them at logon.
-# Used by start.cmd and stop.cmd in the project root.
+# Starts the bot, stops it, or toggles starting it at logon. Used by start.cmd and stop.cmd in the
+# project root. The public panel link is a Cloudflare Tunnel running as its own Windows service
+# (`cloudflared service install <token>`); this script only checks that it's up.
 #
-#   villebot.ps1 tray            funnel + bot in the background, with a taskbar tray icon to control it
-#   villebot.ps1 start           funnel + bot in the current console, for watching the output live
-#   villebot.ps1 stop            stops the bot (the funnel stays configured)
+#   villebot.ps1 tray            bot in the background, with a taskbar tray icon to control it
+#   villebot.ps1 start           bot in the current console, for watching the output live
+#   villebot.ps1 stop            stops the bot (the tunnel keeps running)
 #   villebot.ps1 autostart-on    run the tray at every Windows logon
 #   villebot.ps1 autostart-off   undo autostart-on
 param(
@@ -47,17 +48,12 @@ function Get-Launcher {
     return $null
 }
 
-# Returns why the funnel can't be reached, or $null when Tailscale is connected.
-function Get-TailscaleProblem {
-    if (-not (Get-Command tailscale -ErrorAction SilentlyContinue)) { return 'Tailscale is not installed.' }
-    try {
-        $state = ((tailscale status --json 2>$null) -join "`n" | ConvertFrom-Json).BackendState
-    } catch {
-        $state = $null
-    }
-    if ($state -eq 'Running') { return $null }
-    if (-not $state) { return 'Tailscale is not running. Start it from the Start menu; the panel link is down until then.' }
-    return "Tailscale is not connected ($state). Open Tailscale and connect; the panel link is down until then."
+# Returns why the panel link is down, or $null when the Cloudflare Tunnel service is running.
+function Get-TunnelProblem {
+    $service = Get-Service -Name cloudflared -ErrorAction SilentlyContinue
+    if (-not $service) { return 'Cloudflare Tunnel is not installed as a service. See "Sharing it with friends" in the README.' }
+    if ($service.Status -eq 'Running') { return $null }
+    return "Cloudflare Tunnel is $($service.Status.ToString().ToLower()). Start the Cloudflared service (services.msc); the panel link is down until then."
 }
 
 function Assert-NotRunning {
@@ -76,16 +72,11 @@ function Assert-NotRunning {
 
 function Start-Console {
     Assert-NotRunning
-    $port = Get-PanelPort
     Set-Location $root
     Set-Content -Path $pidFile -Value $PID
     try {
-        $problem = Get-TailscaleProblem
-        if ($problem) {
-            Write-Warning "$problem Starting the bot anyway."
-        } else {
-            & tailscale funnel --bg $port
-        }
+        $problem = Get-TunnelProblem
+        if ($problem) { Write-Warning "$problem Starting the bot anyway." }
         npm.cmd start
     } finally {
         Remove-Item $pidFile -ErrorAction SilentlyContinue
@@ -146,7 +137,7 @@ function Start-Tray {
 
     $script:bot = $null
     $script:stopping = $false
-    $script:tailscaleProblem = $null
+    $script:tunnelProblem = $null
     $script:healthProblem = $null
     $script:lastHealthAlert = [DateTime]::MinValue
     $script:logPos = 0
@@ -172,7 +163,7 @@ function Start-Tray {
         $tray.Text = if ($running) { 'VilleBot: running' } else { 'VilleBot: stopped' }
         $notes = @()
         if ($running -and $script:healthProblem) { $notes += 'audio lagging' }
-        if ($script:tailscaleProblem) { $notes += 'Tailscale down' }
+        if ($script:tunnelProblem) { $notes += 'panel link down' }
         $status.Text = if ($notes) { "$($tray.Text) ($($notes -join ', '))" } else { $tray.Text }
         $startItem.Text = if ($running) { 'Restart bot' } else { 'Start bot' }
         $stopItem.Enabled = $running
@@ -184,7 +175,6 @@ function Start-Tray {
         $script:logTail = ''
         $script:healthProblem = $null
         # cmd handles the redirection; this console is hidden, so the children get no window either.
-        if (-not $script:tailscaleProblem) { cmd /c "tailscale funnel --bg $port >> villebot.log 2>&1" }
         $psi = New-Object System.Diagnostics.ProcessStartInfo 'cmd.exe', '/c npm start >> villebot.log 2>&1'
         $psi.WorkingDirectory = $root
         $psi.UseShellExecute = $false
@@ -215,14 +205,14 @@ function Start-Tray {
     })
 
     # Process.Exited fires on a thread PowerShell can't run script on, so poll from the UI thread instead.
-    # Alerts once each time Tailscale goes from connected to not connected (and at startup if it already is).
-    function Test-Tailscale {
-        $problem = Get-TailscaleProblem
-        if ($problem -and -not $script:tailscaleProblem) {
+    # Alerts once each time the tunnel goes from running to not running (and at startup if it already is).
+    function Test-Tunnel {
+        $problem = Get-TunnelProblem
+        if ($problem -and -not $script:tunnelProblem) {
             $tray.ShowBalloonTip(10000, 'VilleBot: panel link is down', $problem, 'Warning')
             Add-Content -Path $logFile -Value "[tray] $problem"
         }
-        $script:tailscaleProblem = $problem
+        $script:tunnelProblem = $problem
         Update-State
     }
 
@@ -264,7 +254,7 @@ function Start-Tray {
     $script:ticks = 0
     $timer.add_Tick({
         $script:ticks++
-        if ($script:ticks % 30 -eq 0) { Test-Tailscale } # every minute
+        if ($script:ticks % 30 -eq 0) { Test-Tunnel } # every minute
         if ($script:bot -and -not $script:bot.HasExited) { Test-Health }
         if ($script:bot -and $script:bot.HasExited -and $tray.Text -eq 'VilleBot: running') {
             Update-State
@@ -276,7 +266,7 @@ function Start-Tray {
 
     try {
         $tray.Visible = $true
-        Test-Tailscale
+        Test-Tunnel
         Start-BotProcess
         $timer.Start()
         [System.Windows.Forms.Application]::Run()
@@ -301,7 +291,7 @@ switch ($Action) {
         $lnk.WorkingDirectory = $root
         $lnk.WindowStyle = 7 # minimized, so the console doesn't flash before -WindowStyle Hidden applies
         $lnk.Save()
-        Write-Host 'Autostart on: the tray icon, bot and funnel start when you log in.'
+        Write-Host 'Autostart on: the tray icon and bot start when you log in.'
     }
     'autostart-off' {
         Remove-Item $shortcut -ErrorAction SilentlyContinue

@@ -7,7 +7,7 @@ const COOKIE_NAME = 'vb_session';
 const COOKIE_MAX_AGE = 2592000; // 30 days
 // One browser can hold logins for several servers (someone in two servers with two passwords).
 const MAX_SESSIONS_PER_COOKIE = 10;
-// Failed logins are counted globally: behind `tailscale funnel` every request comes from the same
+// Failed logins are counted globally: behind the Cloudflare Tunnel every request comes from the same
 // local proxy address, so per-IP limits would not tell visitors apart.
 const FAIL_WINDOW_MS = 15 * 60_000;
 const FAIL_LIMIT = 20;
@@ -195,7 +195,7 @@ export function createAuth(opts: { users: readonly PanelUser[]; serverPasswords:
       if (!access) return null;
       const origin = req.headers.origin;
       if (origin !== undefined) {
-        // Behind a reverse proxy (e.g. `tailscale funnel`) Host may be the upstream address; the public
+        // Behind a reverse proxy (e.g. a Cloudflare Tunnel) Host may be the upstream address; the public
         // host is then in X-Forwarded-Host. Browsers can't set headers on a WebSocket handshake, so
         // accepting either does not weaken the cross-site check.
         const originHost = new URL(origin).host;

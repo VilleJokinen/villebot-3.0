@@ -313,7 +313,7 @@ export async function startPanel(opts: {
       if (err.code === 'EADDRINUSE') {
         reject(new Error(`Panel port ${port} on ${host} is already in use. Change PANEL_PORT or stop the other process.`));
       } else if (err.code === 'EADDRNOTAVAIL') {
-        reject(new Error(`PANEL_HOST ${host} is not an address of this machine (wrong Tailscale IP, or Tailscale is down?).`));
+        reject(new Error(`PANEL_HOST ${host} is not an address of this machine. Use 127.0.0.1; the Cloudflare Tunnel connects to it locally.`));
       } else {
         reject(new Error(`Panel failed to listen on ${host}:${port}: ${err.message}`));
       }

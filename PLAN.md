@@ -105,7 +105,7 @@ Static: `public/` via express.static after auth.
 Vanilla HTML/CSS/JS, no framework, no CDN. Usable at 360 px. Sections: guild + voice channel picker with Join/Leave; now playing (thumbnail, title, channel, progress bar interpolated from positionMs/sampledAt, play/pause, skip, stop, volume slider debounced, loop cycle off/track/queue); search box + paste-URL (same input: URL → play directly, text → search) with results (thumbnail, title, channel, duration, "Play now" / "Add to queue"); queue (remove, drag-to-reorder with Pointer Events so it works on touch, plus up/down buttons as fallback); toast for errors. Reconnects WS with backoff. Remembers selected guild in localStorage. On 401 show "open with ?token=".
 
 ### C6 `README.md`
-Discord dev portal setup, scopes `bot` + `applications.commands`, permissions Connect + Speak + Send Messages (+ View Channel) → permission integer, invite URL format, .env example, yt-dlp + ffmpeg install on Windows (winget) and macOS (brew), `npm install`, `npm run register`, `npm run dev`, panel access (token URL, Tailscale), `yt-dlp -U` note, troubleshooting.
+Discord dev portal setup, scopes `bot` + `applications.commands`, permissions Connect + Speak + Send Messages (+ View Channel) → permission integer, invite URL format, .env example, yt-dlp + ffmpeg install on Windows (winget) and macOS (brew), `npm install`, `npm run register`, `npm run dev`, panel access (token URL, Cloudflare Tunnel), `yt-dlp -U` note, troubleshooting.
 
 ### C7 integration (Opus)
 `src/index.ts`, global `unhandledRejection`/`uncaughtException` logging, graceful SIGINT/SIGTERM (destroy connections, kill children), end-to-end run, fixes.

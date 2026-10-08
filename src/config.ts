@@ -15,7 +15,7 @@ export interface Config {
   panelUsers: PanelUser[];
   /** Server ID -> password that unlocks only that server (PANEL_PASSWORD_<serverId>). */
   serverPasswords: Map<string, string>;
-  /** Public panel address for /link, e.g. https://pc.tailnet.ts.net. Null when not set. */
+  /** Public panel address for /link, e.g. https://villebot.example.com. Null when not set. */
   panelUrl: string | null;
 }
 
@@ -32,7 +32,7 @@ const MIN_TOKEN = 16;
 
 function checkLength(label: string, value: string, min: number): string {
   if (value.length < min) {
-    throw new Error(`${label} must be at least ${min} characters. The panel can be public with funnel; pick something not guessable.`);
+    throw new Error(`${label} must be at least ${min} characters. The panel can be public through the tunnel; pick something not guessable.`);
   }
   return value;
 }
@@ -57,7 +57,7 @@ export function loadConfig(): Config {
     try {
       parsed = new URL(rawUrl);
     } catch {
-      throw new Error(`PANEL_URL must be a full URL like https://my-pc.tail1234.ts.net, got "${rawUrl}".`);
+      throw new Error(`PANEL_URL must be a full URL like https://villebot.example.com, got "${rawUrl}".`);
     }
     if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
       throw new Error(`PANEL_URL must start with https://, got "${rawUrl}".`);
