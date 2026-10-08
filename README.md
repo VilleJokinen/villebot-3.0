@@ -123,7 +123,15 @@ npm start            # plain run, no watching
 
 `npm run register` registers the commands to the single guild in `GUILD_ID`, so they show up immediately (global commands can take up to an hour). It only needs `DISCORD_TOKEN`, `CLIENT_ID` and `GUILD_ID`.
 
-On startup the bot first checks that `yt-dlp` and `ffmpeg` run. If either is missing it prints install instructions and exits. Config errors (missing variable, `PANEL_TOKEN` shorter than 16 characters, bad `PANEL_PORT`) also exit with a message naming the problem. Then it logs in and starts the panel.
+On startup the bot validates `.env` (missing variable, `PANEL_TOKEN` shorter than 16 characters, bad `PANEL_PORT` all exit with a message naming the problem), then checks that `yt-dlp` and `ffmpeg` run (if either is missing it prints install instructions and exits), starts the panel, and logs in to Discord. A healthy start looks like:
+
+```
+[startup] yt-dlp 2026.08.19, ffmpeg ffmpeg version 7.1 ...
+Panel: http://127.0.0.1:3000/?token=abcd…
+[discord] logged in as VilleBot#1234; servers: My Server
+```
+
+Set `VOICE_DEPS_REPORT=1` to also print the `@discordjs/voice` dependency report (opus library, encryption, DAVE).
 
 ## Control panel
 
